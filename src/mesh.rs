@@ -157,30 +157,8 @@ fn process_z_range_multi(
                     z as f32 * inv_size - 0.5,
                 );
 
-                let mut corner_ambient_occlusion = [1.0f32; 8];
-                for cx_off in 0..2usize {
-                    for cy_off in 0..2usize {
-                        for cz_off in 0..2usize {
-                            let corner_idx = cx_off | (cy_off << 1) | (cz_off << 2);
-                            let cx = x as i32 + cx_off as i32;
-                            let cy = y as i32 + cy_off as i32;
-                            let cz = z as i32 + cz_off as i32;
-
-                            let mut occlusion = 0;
-                            if is_occupied(composite, cx - 1, cy, cz, size_i32, size_usize) {
-                                occlusion += 1;
-                            }
-                            if is_occupied(composite, cx, cy - 1, cz, size_i32, size_usize) {
-                                occlusion += 1;
-                            }
-                            if is_occupied(composite, cx, cy, cz - 1, size_i32, size_usize) {
-                                occlusion += 1;
-                            }
-                            corner_ambient_occlusion[corner_idx] =
-                                AMBIENT_OCCLUSION_FACTORS[occlusion];
-                        }
-                    }
-                }
+                let mut ao_cache = [0.0f32; 8];
+                let mut ao_mask: u8 = 0;
 
                 for (normal, corners, neighbor_offset) in FACE_DEFS {
                     let nx = x as i32 + neighbor_offset[0];
@@ -195,14 +173,35 @@ fn process_z_range_multi(
                     let mut corner_colors = [[0.0; 4]; 4];
 
                     for (i, &corner) in corners.iter().enumerate() {
-                        let [cx, cy, cz] = corner;
+                        let [fcx, fcy, fcz] = corner;
 
-                        let cx_off = if cx > 0.0 { 1 } else { 0 };
-                        let cy_off = if cy > 0.0 { 1 } else { 0 };
-                        let cz_off = if cz > 0.0 { 1 } else { 0 };
-                        let corner_idx = cx_off | (cy_off << 1) | (cz_off << 2);
+                        let cx_off = (fcx > 0.0) as i32;
+                        let cy_off = (fcy > 0.0) as i32;
+                        let cz_off = (fcz > 0.0) as i32;
+                        let corner_idx = (cx_off | (cy_off << 1) | (cz_off << 2)) as usize;
 
-                        let ambient_occlusion = corner_ambient_occlusion[corner_idx];
+                        let ambient_occlusion = if (ao_mask & (1 << corner_idx)) != 0 {
+                            ao_cache[corner_idx]
+                        } else {
+                            ao_mask |= 1 << corner_idx;
+
+                            let cx = x as i32 + cx_off;
+                            let cy = y as i32 + cy_off;
+                            let cz = z as i32 + cz_off;
+
+                            let mut occlusion = 0;
+                            if is_occupied(composite, cx - 1, cy, cz, size_i32, size_usize) {
+                                occlusion += 1;
+                            }
+                            if is_occupied(composite, cx, cy - 1, cz, size_i32, size_usize) {
+                                occlusion += 1;
+                            }
+                            if is_occupied(composite, cx, cy, cz - 1, size_i32, size_usize) {
+                                occlusion += 1;
+                            }
+                            ao_cache[corner_idx] = AMBIENT_OCCLUSION_FACTORS[occlusion];
+                            ao_cache[corner_idx]
+                        };
                         ao_vals[i] = ambient_occlusion;
 
                         corner_colors[i] = [
