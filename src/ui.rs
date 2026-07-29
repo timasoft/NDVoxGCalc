@@ -578,6 +578,11 @@ pub fn egui_ui_system(
                     profiling.voxel_fill_ms / total * 100.0
                 ));
                 ui.label(format!(
+                    "  Composite:  {:.1} ms  ({:.0}%)",
+                    profiling.composite_ms,
+                    profiling.composite_ms / total * 100.0
+                ));
+                ui.label(format!(
                     "  Mesh build: {:.1} ms  ({:.0}%)",
                     profiling.mesh_build_ms,
                     profiling.mesh_build_ms / total * 100.0
@@ -629,6 +634,7 @@ pub fn egui_ui_system(
         profiling.parse_ms = gen_timings.parse_ms;
         profiling.sign_grid_ms = gen_timings.sign_grid_ms;
         profiling.voxel_fill_ms = gen_timings.voxel_fill_ms;
+        profiling.composite_ms = gen_timings.composite_ms;
         profiling.mesh_build_ms = mesh_build_ms;
         profiling.total_ms = total_ms;
 

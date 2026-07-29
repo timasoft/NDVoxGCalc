@@ -155,6 +155,7 @@ fn setup(
         parse_ms: gen_timings.parse_ms,
         sign_grid_ms: gen_timings.sign_grid_ms,
         voxel_fill_ms: gen_timings.voxel_fill_ms,
+        composite_ms: gen_timings.composite_ms,
         mesh_build_ms,
         total_ms,
     });

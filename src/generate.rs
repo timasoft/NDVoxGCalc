@@ -15,6 +15,7 @@ pub struct GenerationTimings {
     pub parse_ms: f64,
     pub sign_grid_ms: f64,
     pub voxel_fill_ms: f64,
+    pub composite_ms: f64,
 }
 
 pub fn generate_voxels(
@@ -30,6 +31,7 @@ pub fn generate_voxels(
         parse_ms: 0.0,
         sign_grid_ms: 0.0,
         voxel_fill_ms: 0.0,
+        composite_ms: 0.0,
     };
 
     expr_status.errors.clear();
@@ -90,6 +92,7 @@ pub fn generate_voxels(
         }
     }
 
+    let compose_start = Instant::now();
     let total_positions = size_usize.pow(3);
     let (composite, rendered_voxel_count) = if grids.is_empty() {
         (vec![0u32; total_positions], 0)
@@ -112,6 +115,7 @@ pub fn generate_voxels(
         }
         (composite, rendered_voxel_count)
     };
+    timings.composite_ms = compose_start.elapsed().as_secs_f64() * 1000.0;
 
     // Only mark as valid if no errors occurred AND at least one enabled expression exists
     if expr_status.errors.is_empty()

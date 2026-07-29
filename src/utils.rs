@@ -129,6 +129,7 @@ pub struct ProfilingData {
     pub parse_ms: f64,
     pub sign_grid_ms: f64,
     pub voxel_fill_ms: f64,
+    pub composite_ms: f64,
     pub mesh_build_ms: f64,
     pub total_ms: f64,
 }
