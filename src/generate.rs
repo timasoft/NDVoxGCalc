@@ -4,6 +4,7 @@ use std::time::Instant;
 use web_time::Instant;
 
 use bevy::prelude::*;
+use rayon::prelude::*;
 
 use crate::math;
 use crate::math::DimConfig;
@@ -100,6 +101,31 @@ pub fn generate_voxels(
         && let Some(grid) = grids.pop()
     {
         (grid, last_voxel_count)
+    } else if parallel_available() {
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = total_positions.div_ceil(num_threads);
+        let mut composite = vec![0u32; total_positions];
+        let rendered_voxel_count = composite
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                let start = chunk_idx * chunk_size;
+                let mut local = 0usize;
+                for (i, cell) in chunk.iter_mut().enumerate() {
+                    let idx = start + i;
+                    for grid in &grids {
+                        let val = grid[idx];
+                        if val != 0 {
+                            *cell = val;
+                            local += 1;
+                            break;
+                        }
+                    }
+                }
+                local
+            })
+            .sum();
+        (composite, rendered_voxel_count)
     } else {
         let mut composite = vec![0u32; total_positions];
         let mut rendered_voxel_count = 0;
