@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: bencherdev/bencher@v0.6.10
+      - uses: bencherdev/bencher@v0.6.11
       - name: Archive closed PR branch with Bencher
         run: |
           bencher archive \

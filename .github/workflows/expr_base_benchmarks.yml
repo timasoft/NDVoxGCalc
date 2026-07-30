@@ -27,7 +27,7 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - uses: bencherdev/bencher@v0.6.10
+      - uses: bencherdev/bencher@v0.6.11
 
       - name: Track base branch benchmarks with Bencher
         run: |
