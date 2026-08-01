@@ -1,5 +1,5 @@
-use crate::utils::DimMapping;
-use hypervox_expr::VarMap;
+use crate::utils::{DimMapping, PackedColor};
+use hypervox_expr::{Node, VarMap};
 use rayon::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,7 +11,7 @@ use web_time::Instant;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GridTimings {
     pub sign_grid_ms: f64,
-    pub voxel_fill_ms: f64,
+    pub composite_ms: f64,
 }
 
 /// Maximum supported number of dimensions (stack-allocated vars buffer size).
@@ -85,20 +85,18 @@ impl VarMap for DimConfig {
     }
 }
 
-/// Generates a voxel grid of size `size^3` from an N-dimensional expression.
-/// - `expr_str`: mathematical expression in terms of x,y,z (spatial) and x0..x{N-1} (dims)
-/// - `base_color`: 24-bit RGB color (0xRRGGBB). Stored in grid as `base_color + 1`
+/// Generates a voxel grid of size `size^3` from N-dimensional expressions.
+/// - `exprs`: parsed expressions with their base colors (0xRRGGBB stored as `color + 1`)
 /// - `world_half_extent`: half the size of the region in world units.
 /// - `dim`: N-dimensional mapping config
 /// - `use_parallel`: whether to use parallel computation (rayon)
-pub fn generate_voxel_grid(
+pub fn generate_voxel_grid_multi_with_composing(
     size: usize,
-    expr_str: &str,
-    base_color: u32,
+    exprs: &[(Node, PackedColor)],
     world_half_extent: f64,
     dim: &DimConfig,
     use_parallel: bool,
-) -> Result<(Vec<u32>, GridTimings, usize), String> {
+) -> Result<(Vec<PackedColor>, GridTimings, usize), String> {
     if size == 0 {
         return Ok((Vec::new(), GridTimings::default(), 0));
     }
@@ -110,77 +108,40 @@ pub fn generate_voxel_grid(
         ));
     }
 
-    let expr = hypervox_expr::parse(expr_str, dim).map_err(|e| e.to_string())?;
-
     let node_dim = size + 1;
-    let node_dim_sq = node_dim * node_dim;
-    let size_sq = size * size;
-
-    let mut sign_grid = vec![false; node_dim * node_dim_sq];
-    let mut voxel_grid = vec![0u32; size * size_sq];
 
     let step = (world_half_extent * 2.0) / size as f64;
-    let packed_color = (base_color & 0xFFFFFF).wrapping_add(1);
 
     let sign_start = Instant::now();
-
-    if use_parallel {
-        compute_sign_grid_par(
-            &mut sign_grid,
-            &expr,
-            node_dim,
-            node_dim_sq,
-            step,
-            world_half_extent,
-            dim,
-        );
-    } else {
-        compute_sign_grid(
-            &mut sign_grid,
-            &expr,
-            node_dim,
-            node_dim_sq,
-            step,
-            world_half_extent,
-            dim,
-        );
-    }
-
+    let sign_grids: Vec<(Vec<bool>, PackedColor)> = exprs
+        .iter()
+        .map(|(expr, base_color)| {
+            let sign_grid = if use_parallel {
+                compute_sign_grid_par(expr, node_dim, step, world_half_extent, dim)
+            } else {
+                compute_sign_grid(expr, node_dim, step, world_half_extent, dim)
+            };
+            (sign_grid, *base_color)
+        })
+        .collect();
     let sign_grid_ms = sign_start.elapsed().as_secs_f64() * 1000.0;
 
-    let fill_start = Instant::now();
+    let composite_start = Instant::now();
 
-    let voxel_count = if use_parallel {
-        fill_voxels_par(
-            &mut voxel_grid,
-            &sign_grid,
-            size,
-            node_dim,
-            node_dim_sq,
-            size_sq,
-            packed_color,
-        )
+    let (voxel_grid, count) = if use_parallel {
+        fill_voxels_composing_par(&sign_grids, size, node_dim)
     } else {
-        fill_voxels(
-            &mut voxel_grid,
-            &sign_grid,
-            size,
-            node_dim,
-            node_dim_sq,
-            size_sq,
-            packed_color,
-        )
+        fill_voxels_composing(&sign_grids, size, node_dim)
     };
-
-    let voxel_fill_ms = fill_start.elapsed().as_secs_f64() * 1000.0;
+    let composite_ms = composite_start.elapsed().as_secs_f64() * 1000.0;
 
     Ok((
         voxel_grid,
         GridTimings {
             sign_grid_ms,
-            voxel_fill_ms,
+            composite_ms,
         },
-        voxel_count,
+        count,
     ))
 }
 
@@ -206,14 +167,16 @@ fn init_fixed_vars(dim: &DimConfig) -> [f64; MAX_NDIM] {
 }
 
 fn compute_sign_grid(
-    sign_grid: &mut [bool],
     expr: &hypervox_expr::Node,
     node_dim: usize,
-    node_dim_sq: usize,
     step: f64,
     world_half_extent: f64,
     dim: &DimConfig,
-) {
+) -> Vec<bool> {
+    let node_dim_sq = node_dim * node_dim;
+
+    let mut sign_grid: Vec<bool> = vec![false; node_dim * node_dim_sq];
+
     let mut vars = init_fixed_vars(dim);
 
     let mut vars_options: Vec<Option<f64>> = vars.iter().copied().map(Some).collect();
@@ -253,17 +216,21 @@ fn compute_sign_grid(
             }
         }
     }
+
+    sign_grid
 }
 
 fn compute_sign_grid_par(
-    sign_grid: &mut [bool],
     expr: &hypervox_expr::Node,
     node_dim: usize,
-    node_dim_sq: usize,
     step: f64,
     world_half_extent: f64,
     dim: &DimConfig,
-) {
+) -> Vec<bool> {
+    let node_dim_sq = node_dim * node_dim;
+
+    let mut sign_grid: Vec<bool> = vec![false; node_dim * node_dim_sq];
+
     let x0 = -world_half_extent + dim.world_offset.0;
     let y0 = -world_half_extent + dim.world_offset.1;
     let z0 = -world_half_extent + dim.world_offset.2;
@@ -338,6 +305,8 @@ fn compute_sign_grid_par(
                 }
             }
         });
+
+    sign_grid
 }
 
 #[inline]
@@ -363,15 +332,16 @@ fn should_fill_voxel(
     sum != 8 && sum != 0
 }
 
-fn fill_voxels(
-    voxel_grid: &mut [u32],
-    sign_grid: &[bool],
+fn fill_voxels_composing(
+    sign_grids: &[(Vec<bool>, PackedColor)],
     size: usize,
     node_dim: usize,
-    node_dim_sq: usize,
-    size_sq: usize,
-    packed_color: u32,
-) -> usize {
+) -> (Vec<PackedColor>, usize) {
+    let node_dim_sq = node_dim * node_dim;
+    let size_sq = size * size;
+
+    let mut voxel_grid = vec![None; size * size_sq];
+
     let mut count = 0;
     for vz in 0..size {
         let base_z = vz * node_dim_sq;
@@ -384,39 +354,44 @@ fn fill_voxels(
             for vx in 0..size {
                 let base = base_y + vx;
 
-                let s000 = sign_grid[base];
-                let s100 = sign_grid[base + 1];
-                let s010 = sign_grid[base + node_dim];
-                let s110 = sign_grid[base + node_dim + 1];
-                let s001 = sign_grid[base + node_dim_sq];
-                let s101 = sign_grid[base + node_dim_sq + 1];
-                let s011 = sign_grid[base + node_dim_sq + node_dim];
-                let s111 = sign_grid[base + node_dim_sq + node_dim + 1];
+                for (sign_grid, packed_color) in sign_grids {
+                    let s000 = sign_grid[base];
+                    let s100 = sign_grid[base + 1];
+                    let s010 = sign_grid[base + node_dim];
+                    let s110 = sign_grid[base + node_dim + 1];
+                    let s001 = sign_grid[base + node_dim_sq];
+                    let s101 = sign_grid[base + node_dim_sq + 1];
+                    let s011 = sign_grid[base + node_dim_sq + node_dim];
+                    let s111 = sign_grid[base + node_dim_sq + node_dim + 1];
 
-                if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
-                    voxel_grid[voxel_base_y + vx] = packed_color;
-                    count += 1;
+                    if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
+                        voxel_grid[voxel_base_y + vx] = *packed_color;
+                        count += 1;
+                        break;
+                    }
                 }
             }
         }
     }
-    count
+
+    (voxel_grid, count)
 }
 
-fn fill_voxels_par(
-    voxel_grid: &mut [u32],
-    sign_grid: &[bool],
+fn fill_voxels_composing_par(
+    sign_grids: &[(Vec<bool>, PackedColor)],
     size: usize,
     node_dim: usize,
-    node_dim_sq: usize,
-    size_sq: usize,
-    packed_color: u32,
-) -> usize {
+) -> (Vec<PackedColor>, usize) {
+    let node_dim_sq = node_dim * node_dim;
+    let size_sq = size * size;
+
+    let mut voxel_grid = vec![None; size * size_sq];
+
     let total_voxels = size * size_sq;
     let num_threads = rayon::current_num_threads();
     let chunk_size = total_voxels.div_ceil(num_threads);
 
-    voxel_grid
+    let count = voxel_grid
         .par_chunks_mut(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
@@ -429,18 +404,21 @@ fn fill_voxels_par(
             for cell in chunk.iter_mut() {
                 let base = vx + vy * node_dim + vz * node_dim_sq;
 
-                let s000 = sign_grid[base];
-                let s100 = sign_grid[base + 1];
-                let s010 = sign_grid[base + node_dim];
-                let s110 = sign_grid[base + node_dim + 1];
-                let s001 = sign_grid[base + node_dim_sq];
-                let s101 = sign_grid[base + node_dim_sq + 1];
-                let s011 = sign_grid[base + node_dim_sq + node_dim];
-                let s111 = sign_grid[base + node_dim_sq + node_dim + 1];
+                for (sign_grid, packed_color) in sign_grids {
+                    let s000 = sign_grid[base];
+                    let s100 = sign_grid[base + 1];
+                    let s010 = sign_grid[base + node_dim];
+                    let s110 = sign_grid[base + node_dim + 1];
+                    let s001 = sign_grid[base + node_dim_sq];
+                    let s101 = sign_grid[base + node_dim_sq + 1];
+                    let s011 = sign_grid[base + node_dim_sq + node_dim];
+                    let s111 = sign_grid[base + node_dim_sq + node_dim + 1];
 
-                if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
-                    *cell = packed_color;
-                    local += 1;
+                    if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
+                        *cell = *packed_color;
+                        local += 1;
+                        break;
+                    }
                 }
 
                 vx += 1;
@@ -456,29 +434,41 @@ fn fill_voxels_par(
 
             local
         })
-        .sum()
+        .sum();
+
+    (voxel_grid, count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::pack_color;
+
+    fn fill_one(size: usize, expr: &str, color: (u8, u8, u8), half: f64, dim: &DimConfig) -> usize {
+        let node = hypervox_expr::parse(expr, dim).unwrap();
+        let (_, _, count) = generate_voxel_grid_multi_with_composing(
+            size,
+            &[(node, pack_color(color))],
+            half,
+            dim,
+            true,
+        )
+        .unwrap();
+        count
+    }
 
     #[test]
     fn test_sphere_generation() {
         let dim = DimConfig::default();
-        let (grid, ..) =
-            generate_voxel_grid(32, "x^2 + y^2 + z^2 - 4", 0xFF0000, 5.0, &dim, true).unwrap();
-        let filled = grid.iter().filter(|&&v| v != 0).count();
-        assert!(filled > 0 && filled < grid.len());
+        let filled = fill_one(32, "x^2 + y^2 + z^2 - 4", (0xFF, 0x00, 0x00), 5.0, &dim);
+        assert!(filled > 0 && filled < 32usize.pow(3));
     }
 
     #[test]
     fn test_sinusoidal_surface() {
         let dim = DimConfig::default();
-        let (grid, ..) =
-            generate_voxel_grid(16, "sin(x) + cos(y) + z", 0x00FF00, 8.0, &dim, true).unwrap();
-        let filled = grid.iter().filter(|&&v| v != 0).count();
-        assert!(filled > 0 && filled < grid.len());
+        let filled = fill_one(16, "sin(x) + cos(y) + z", (0x00, 0xFF, 0x00), 8.0, &dim);
+        assert!(filled > 0 && filled < 16usize.pow(3));
     }
 
     #[test]
@@ -491,10 +481,13 @@ mod tests {
             fixed: vec![0.0, 0.0, 0.0, 0.0],
             ..DimConfig::default()
         };
-        let (grid, ..) =
-            generate_voxel_grid(16, "x1^2 + x2^2 + x3^2 - x0^2", 0x00FF00, 8.0, &dim, true)
-                .unwrap();
-        let filled = grid.iter().filter(|&&v| v != 0).count();
+        let filled = fill_one(
+            16,
+            "x1^2 + x2^2 + x3^2 - x0^2",
+            (0x00, 0xFF, 0x00),
+            8.0,
+            &dim,
+        );
         assert_eq!(filled, 0);
     }
 }

@@ -1,6 +1,8 @@
 use bevy::{mesh::Indices, prelude::*};
 use rayon::prelude::*;
 
+use crate::utils::{PackedColor, unpack_color};
+
 type Vec3Arr = [f32; 3];
 type IVec3Arr = [i32; 3];
 type CornerArr = [Vec3Arr; 4];
@@ -82,20 +84,9 @@ fn grid_index(x: usize, y: usize, z: usize, grid_size: usize) -> usize {
     x + y * grid_size + z * grid_size.pow(2)
 }
 
-/// Decodes color from u32 with +1 offset.
-/// 0 = empty, 1 = #000000 (black), 0xFFFFFF+1 = #FFFFFF (white)
-#[inline]
-fn decode_color(packed: u32) -> LinearRgba {
-    let val = packed - 1;
-    let r = ((val >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((val >> 8) & 0xFF) as f32 / 255.0;
-    let b = (val & 0xFF) as f32 / 255.0;
-    LinearRgba::rgb(r, g, b)
-}
-
 #[inline]
 fn is_occupied(
-    composite: &[u32],
+    composite: &[PackedColor],
     x: i32,
     y: i32,
     z: i32,
@@ -106,13 +97,13 @@ fn is_occupied(
     {
         return false;
     }
-    composite[grid_index(x as usize, y as usize, z as usize, grid_size_usize)] != 0
+    composite[grid_index(x as usize, y as usize, z as usize, grid_size_usize)].is_some()
 }
 
 fn process_z_range_multi(
     z_start: u32,
     z_end: u32,
-    composite: &[u32],
+    composite: &[PackedColor],
     size: u32,
     voxel_count: usize,
 ) -> MeshData {
@@ -130,10 +121,9 @@ fn process_z_range_multi(
             for x in 0..size {
                 let idx = grid_index(x as usize, y as usize, z as usize, size_usize);
 
-                let voxel_val = composite[idx];
-                if voxel_val == 0 {
+                let Some(voxel_val) = composite[idx] else {
                     continue;
-                }
+                };
 
                 // Skip interior voxels with all 6 faces occluded
                 let all_occluded = FACE_DEFS.iter().all(|(_, _, off)| {
@@ -150,7 +140,7 @@ fn process_z_range_multi(
                     continue;
                 }
 
-                let base_linear = decode_color(voxel_val);
+                let base_linear = unpack_color(voxel_val);
                 let offset = Vec3::new(
                     x as f32 * inv_size - 0.5,
                     y as f32 * inv_size - 0.5,
@@ -254,7 +244,7 @@ fn process_z_range_multi(
 
 pub fn build_batched_mesh_with_global_corner_ambient_occlusion(
     mesh: &mut Mesh,
-    composite: &[u32],
+    composite: &[PackedColor],
     grid_config: &crate::utils::GridConfig,
     voxel_count: usize,
 ) {
@@ -289,7 +279,7 @@ fn split_disjoint<'a, T>(slice: &'a mut [T], counts: &[usize]) -> Vec<&'a mut [T
 
 pub fn build_batched_mesh_with_global_corner_ambient_occlusion_par(
     mesh: &mut Mesh,
-    composite: &[u32],
+    composite: &[PackedColor],
     grid_config: &crate::utils::GridConfig,
     voxel_count: usize,
 ) {

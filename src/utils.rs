@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use bevy::prelude::*;
 
 /// First value `v` where `v + step == v` due to f64 rounding.
@@ -128,7 +130,6 @@ pub struct ExpressionStatus {
 pub struct ProfilingData {
     pub parse_ms: f64,
     pub sign_grid_ms: f64,
-    pub voxel_fill_ms: f64,
     pub composite_ms: f64,
     pub mesh_build_ms: f64,
     pub total_ms: f64,
@@ -154,4 +155,21 @@ pub fn parallel_available() -> bool {
     {
         true
     }
+}
+
+/// A 24-bit RGB color plus a "filled" marker, packed into `Option<NonZeroU32>`
+pub type PackedColor = Option<NonZeroU32>;
+
+#[inline(always)]
+pub fn pack_color((r, g, b): (u8, u8, u8)) -> PackedColor {
+    NonZeroU32::new((((r as u32) << 16) | ((g as u32) << 8) | b as u32).wrapping_add(1))
+}
+
+#[inline(always)]
+pub fn unpack_color(val: NonZeroU32) -> LinearRgba {
+    let raw = val.get() - 1;
+    let r = ((raw >> 16) & 0xFF) as f32 / 255.0;
+    let g = ((raw >> 8) & 0xFF) as f32 / 255.0;
+    let b = (raw & 0xFF) as f32 / 255.0;
+    LinearRgba::rgb(r, g, b)
 }
