@@ -113,17 +113,27 @@ pub fn generate_voxel_grid_multi_with_composing(
     let step = (world_half_extent * 2.0) / size as f64;
 
     let sign_start = Instant::now();
-    let sign_grids: Vec<(Vec<bool>, PackedColor)> = exprs
-        .iter()
-        .map(|(expr, base_color)| {
-            let sign_grid = if use_parallel {
-                compute_sign_grid_par(expr, node_dim, step, world_half_extent, dim)
-            } else {
-                compute_sign_grid(expr, node_dim, step, world_half_extent, dim)
-            };
-            (sign_grid, *base_color)
-        })
-        .collect();
+    let sign_grids: Vec<(Vec<bool>, PackedColor)> = if use_parallel {
+        exprs
+            .par_iter()
+            .map(|(expr, base_color)| {
+                (
+                    compute_sign_grid_par(expr, node_dim, step, world_half_extent, dim),
+                    *base_color,
+                )
+            })
+            .collect()
+    } else {
+        exprs
+            .iter()
+            .map(|(expr, base_color)| {
+                (
+                    compute_sign_grid(expr, node_dim, step, world_half_extent, dim),
+                    *base_color,
+                )
+            })
+            .collect()
+    };
     let sign_grid_ms = sign_start.elapsed().as_secs_f64() * 1000.0;
 
     let composite_start = Instant::now();
