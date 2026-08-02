@@ -139,9 +139,9 @@ pub fn generate_voxel_grid_multi_with_composing(
     let composite_start = Instant::now();
 
     let (voxel_grid, count) = if use_parallel {
-        fill_voxels_composing_par(&sign_grids, size, node_dim)
+        fill_voxels_composing_par(&sign_grids, node_dim)
     } else {
-        fill_voxels_composing(&sign_grids, size, node_dim)
+        fill_voxels_composing(&sign_grids, node_dim)
     };
     let composite_ms = composite_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -342,13 +342,51 @@ fn should_fill_voxel(
     sum != 8 && sum != 0
 }
 
+#[inline(always)]
+unsafe fn fill_voxel(
+    sign_grids: &[(Vec<bool>, PackedColor)],
+    cell: &mut PackedColor,
+    base: usize,
+    node_dim: usize,
+    node_dim_sq: usize,
+    count: &mut usize,
+) {
+    for (sign_grid, packed_color) in sign_grids {
+        let (s000, s100, s010, s110, s001, s101, s011, s111) = unsafe {
+            (
+                *sign_grid.get_unchecked(base),
+                *sign_grid.get_unchecked(base + 1),
+                *sign_grid.get_unchecked(base + node_dim),
+                *sign_grid.get_unchecked(base + node_dim + 1),
+                *sign_grid.get_unchecked(base + node_dim_sq),
+                *sign_grid.get_unchecked(base + node_dim_sq + 1),
+                *sign_grid.get_unchecked(base + node_dim_sq + node_dim),
+                *sign_grid.get_unchecked(base + node_dim_sq + node_dim + 1),
+            )
+        };
+
+        if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
+            *cell = *packed_color;
+            *count += 1;
+            break;
+        }
+    }
+}
+
 fn fill_voxels_composing(
     sign_grids: &[(Vec<bool>, PackedColor)],
-    size: usize,
     node_dim: usize,
 ) -> (Vec<PackedColor>, usize) {
     let node_dim_sq = node_dim * node_dim;
+    let size = node_dim.saturating_sub(1);
     let size_sq = size * size;
+
+    debug_assert!(
+        sign_grids
+            .iter()
+            .all(|(g, _)| g.len() == node_dim * node_dim_sq),
+        "sign grid must be node_dim^3"
+    );
 
     let mut voxel_grid = vec![None; size * size_sq];
 
@@ -364,21 +402,27 @@ fn fill_voxels_composing(
             for vx in 0..size {
                 let base = base_y + vx;
 
-                for (sign_grid, packed_color) in sign_grids {
-                    let s000 = sign_grid[base];
-                    let s100 = sign_grid[base + 1];
-                    let s010 = sign_grid[base + node_dim];
-                    let s110 = sign_grid[base + node_dim + 1];
-                    let s001 = sign_grid[base + node_dim_sq];
-                    let s101 = sign_grid[base + node_dim_sq + 1];
-                    let s011 = sign_grid[base + node_dim_sq + node_dim];
-                    let s111 = sign_grid[base + node_dim_sq + node_dim + 1];
-
-                    if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
-                        voxel_grid[voxel_base_y + vx] = *packed_color;
-                        count += 1;
-                        break;
-                    }
+                // SAFETY: the largest read offset is `node_dim^2 + node_dim + 1`.
+                // Since the loops run vx, vy, vz < size, the largest index is:
+                //   base + node_dim^2 + node_dim + 1
+                //   = (size-1)*(1 + node_dim + node_dim^2) + node_dim^2 + node_dim + 1
+                //   = size*(1 + node_dim + node_dim^2)
+                //   = (node_dim-1)*(1 + node_dim + node_dim^2) [node_dim = size+1]
+                //   = node_dim^3 - 1,
+                // and the debug_asserts above guarantee every grid holds
+                // exactly node_dim^3 entries, so all reads are in bounds.
+                unsafe {
+                    fill_voxel(
+                        sign_grids,
+                        // SAFETY: voxel_base_y + vx = vz*size^2 + vy*size + vx,
+                        // with vx, vy, vz < size, so the largest index is
+                        // size^3 - 1, within voxel_grid's size^3 entries.
+                        voxel_grid.get_unchecked_mut(voxel_base_y + vx),
+                        base,
+                        node_dim,
+                        node_dim_sq,
+                        &mut count,
+                    )
                 }
             }
         }
@@ -389,11 +433,18 @@ fn fill_voxels_composing(
 
 fn fill_voxels_composing_par(
     sign_grids: &[(Vec<bool>, PackedColor)],
-    size: usize,
     node_dim: usize,
 ) -> (Vec<PackedColor>, usize) {
     let node_dim_sq = node_dim * node_dim;
+    let size = node_dim.saturating_sub(1);
     let size_sq = size * size;
+
+    debug_assert!(
+        sign_grids
+            .iter()
+            .all(|(g, _)| g.len() == node_dim * node_dim_sq),
+        "sign grid must be node_dim^3"
+    );
 
     let mut voxel_grid = vec![None; size * size_sq];
 
@@ -414,22 +465,16 @@ fn fill_voxels_composing_par(
             for cell in chunk.iter_mut() {
                 let base = vx + vy * node_dim + vz * node_dim_sq;
 
-                for (sign_grid, packed_color) in sign_grids {
-                    let s000 = sign_grid[base];
-                    let s100 = sign_grid[base + 1];
-                    let s010 = sign_grid[base + node_dim];
-                    let s110 = sign_grid[base + node_dim + 1];
-                    let s001 = sign_grid[base + node_dim_sq];
-                    let s101 = sign_grid[base + node_dim_sq + 1];
-                    let s011 = sign_grid[base + node_dim_sq + node_dim];
-                    let s111 = sign_grid[base + node_dim_sq + node_dim + 1];
-
-                    if should_fill_voxel(s000, s100, s010, s110, s001, s101, s011, s111) {
-                        *cell = *packed_color;
-                        local += 1;
-                        break;
-                    }
-                }
+                // SAFETY: the largest read offset is `node_dim^2 + node_dim + 1`.
+                // Since the loops run vx, vy, vz < size, the largest index is:
+                //   base + node_dim^2 + node_dim + 1
+                //   = (size-1)*(1 + node_dim + node_dim^2) + node_dim^2 + node_dim + 1
+                //   = size*(1 + node_dim + node_dim^2)
+                //   = (node_dim-1)*(1 + node_dim + node_dim^2) [node_dim = size+1]
+                //   = node_dim^3 - 1,
+                // and the debug_asserts above guarantee every grid holds
+                // exactly node_dim^3 entries, so all reads are in bounds.
+                unsafe { fill_voxel(sign_grids, cell, base, node_dim, node_dim_sq, &mut local) }
 
                 vx += 1;
                 if vx == size {
