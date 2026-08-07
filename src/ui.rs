@@ -30,6 +30,29 @@ pub enum RegenRequest {
     Force,
 }
 
+#[inline(always)]
+fn snap_size_up(size: u32) -> u32 {
+    let step = if size < 4 {
+        2
+    } else if size < 8 {
+        4
+    } else {
+        8
+    };
+    (size / step + 1) * step
+}
+
+#[inline(always)]
+fn snap_size_down(size: u32) -> u32 {
+    if size > 8 {
+        (size - 1) / 8 * 8
+    } else if size > 4 {
+        4
+    } else {
+        2
+    }
+}
+
 fn format_drag_value(val: f64) -> String {
     let abs_val = val.abs();
     if abs_val != 0.0 && (abs_val < 1e-6 || abs_val >= 1e6) {
@@ -265,13 +288,7 @@ pub fn egui_ui_system(
             ui.label("Grid Size:");
             ui.horizontal(|ui| {
                 if ui.button("-").clicked() && grid_config.size > 2 {
-                    grid_config.size = if grid_config.size > 8 {
-                        grid_config.size.saturating_sub(8)
-                    } else if grid_config.size > 4 {
-                        grid_config.size.saturating_sub(4)
-                    } else {
-                        grid_config.size.saturating_sub(2).max(2)
-                    };
+                    grid_config.size = snap_size_down(grid_config.size);
                     *regenerate_request = RegenRequest::Debounce(Instant::now());
                 }
 
@@ -289,15 +306,7 @@ pub fn egui_ui_system(
                 }
 
                 if ui.button("+").clicked() && grid_config.size < 256 {
-                    grid_config.size = if grid_config.size <= 2 {
-                        (grid_config.size + 2).min(256)
-                    } else if grid_config.size <= 4 {
-                        (grid_config.size + 4).min(256)
-                    } else if grid_config.size < 8 {
-                        8
-                    } else {
-                        (grid_config.size + 8).min(256)
-                    };
+                    grid_config.size = snap_size_up(grid_config.size);
                     *regenerate_request = RegenRequest::Debounce(Instant::now());
                 }
             });
