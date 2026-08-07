@@ -136,6 +136,7 @@ pub fn egui_ui_system(
 
             // Scrollable area for expression list with fixed max height
             egui::ScrollArea::vertical()
+                .id_salt("expr_list_scroll")
                 .max_height(300.0)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
@@ -331,12 +332,15 @@ pub fn egui_ui_system(
             // --- Dimension Configuration ---
             ui.label("Dimensions (N):");
             ui.horizontal(|ui| {
-                let mut ndim = dim_mapping.ndim as i32;
                 if ui
-                    .add(egui::Slider::new(&mut ndim, 3..=16).logarithmic(false))
+                    .add(
+                        egui::DragValue::new(&mut dim_mapping.ndim)
+                            .speed(0.0)
+                            .custom_formatter(|val, _| format_drag_value(val))
+                            .range(3..=usize::MAX),
+                    )
                     .changed()
                 {
-                    dim_mapping.ndim = ndim as usize;
                     let n = dim_mapping.ndim;
                     dim_mapping.fixed.resize(n, 0.0);
                     dim_mapping.x_dim = dim_mapping.x_dim.min(dim_mapping.ndim - 1);
@@ -430,24 +434,33 @@ pub fn egui_ui_system(
             // Fixed values for non-spatial dims
             let max_offset = first_bad_offset(grid_config.voxel_size)
                 - (grid_config.size as f64 / 2.0) * grid_config.voxel_size;
-            for d in 0..dim_mapping.ndim {
-                if d != dim_mapping.x_dim && d != dim_mapping.y_dim && d != dim_mapping.z_dim {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("x{d}:"));
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut dim_mapping.fixed[d])
-                                    .speed(0.0)
-                                    .custom_formatter(|val, _| format_drag_value(val))
-                                    .range(-max_offset..=max_offset),
-                            )
-                            .changed()
+            egui::ScrollArea::vertical()
+                .id_salt("dims_fixed_scroll")
+                .max_height(300.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for d in 0..dim_mapping.ndim {
+                        if d != dim_mapping.x_dim
+                            && d != dim_mapping.y_dim
+                            && d != dim_mapping.z_dim
                         {
-                            *regenerate_request = RegenRequest::Debounce(Instant::now());
+                            ui.horizontal(|ui| {
+                                ui.label(format!("x{d}:"));
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut dim_mapping.fixed[d])
+                                            .speed(0.0)
+                                            .custom_formatter(|val, _| format_drag_value(val))
+                                            .range(-max_offset..=max_offset),
+                                    )
+                                    .changed()
+                                {
+                                    *regenerate_request = RegenRequest::Debounce(Instant::now());
+                                }
+                            });
                         }
-                    });
-                }
-            }
+                    }
+                });
 
             ui.separator();
 

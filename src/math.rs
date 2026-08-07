@@ -14,9 +14,6 @@ pub struct GridTimings {
     pub composite_ms: f64,
 }
 
-/// Maximum supported number of dimensions (stack-allocated vars buffer size).
-const MAX_NDIM: usize = 128;
-
 /// Configuration for N-dimensional to 3D spatial mapping.
 /// Maps N dimensions (0..ndim) to 3D spatial axes (X, Y, Z).
 /// Dimensions not mapped to any axis are held at fixed values.
@@ -161,8 +158,8 @@ fn eval_sign(val: f64) -> bool {
 }
 
 #[inline]
-fn init_fixed_vars(dim: &DimConfig) -> [f64; MAX_NDIM] {
-    let mut vars = [0.0; MAX_NDIM];
+fn init_fixed_vars(dim: &DimConfig) -> Vec<f64> {
+    let mut vars = vec![0.0; dim.ndim];
     for (d, v) in vars.iter_mut().enumerate() {
         if d != dim.x_dim && d != dim.y_dim && d != dim.z_dim {
             *v = if d < dim.fixed.len() {
@@ -268,7 +265,7 @@ fn compute_sign_grid_par(
             let start_ny = (start % node_dim_sq) / node_dim;
             let start_nx = start % node_dim;
 
-            let mut vars = base_vars;
+            let mut vars = base_vars.clone();
             let mut cache = vec![0.0; multi.cse_slots];
             let mut nz = start_nz;
             let mut ny = start_ny;
