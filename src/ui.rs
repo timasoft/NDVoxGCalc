@@ -370,7 +370,7 @@ pub fn egui_ui_system(
             let mut z_dim = dim_mapping.z_dim;
 
             ui.horizontal(|ui| {
-                ui.label("X ←");
+                ui.label("X ⬅");
                 egui::ComboBox::from_id_salt("x_dim_map")
                     .selected_text(format!("x{x_dim}"))
                     .show_ui(ui, |ui| {
@@ -383,7 +383,7 @@ pub fn egui_ui_system(
                     });
             });
             ui.horizontal(|ui| {
-                ui.label("Y ←");
+                ui.label("Y ⬅");
                 egui::ComboBox::from_id_salt("y_dim_map")
                     .selected_text(format!("x{y_dim}"))
                     .show_ui(ui, |ui| {
@@ -396,7 +396,7 @@ pub fn egui_ui_system(
                     });
             });
             ui.horizontal(|ui| {
-                ui.label("Z ←");
+                ui.label("Z ⬅");
                 egui::ComboBox::from_id_salt("z_dim_map")
                     .selected_text(format!("x{z_dim}"))
                     .show_ui(ui, |ui| {
