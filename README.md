@@ -1,3 +1,5 @@
+<div align='center'>
+
 # HyperVox
 
 Voxel graphical calculator for N-dimensional mathematical expressions. Each expression is evaluated over a grid and rendered as a colored voxel mesh.
@@ -6,9 +8,13 @@ Voxel graphical calculator for N-dimensional mathematical expressions. Each expr
 
 HyperVox takes one or more mathematical expressions and renders them as 3D voxel graphics. Enter an expression, pick a color, and adjust the grid; the result is a colored voxel mesh you can rotate and inspect. Expressions are evaluated over an N-dimensional space, so shapes can be defined in more than three dimensions.
 
-HyperVox runs as a native desktop app and in the browser. A single-threaded build is hosted on GitHub Pages: <https://timasoft.github.io/hypervox/>
-
 ![Screenshot](assets/screenshot.png)
+
+A single-threaded build is hosted on GitHub Pages:
+
+<https://timasoft.github.io/hypervox/>
+
+</div>
 
 ## How it works
 
@@ -19,10 +25,8 @@ With more than three dimensions, only the three dimensions mapped to the X, Y, Z
 ## Features
 
 - Expression editor with live regeneration (debounced 300 ms)
-- Any number of dimensions (`x0`, `x1`, ...), mapped independently to the X, Y,
-  Z axes; unmapped dimensions are fixed at adjustable values
-- Each expression is composited front-to-back with its own color (editable,
-  enable/disable, reorder, duplicate, remove)
+- Any number of dimensions (`x0`, `x1`, ...), mapped independently to the X, Y, Z axes; unmapped dimensions are fixed at adjustable values
+- Each expression is composited front-to-back with its own color (editable, enable/disable, reorder, duplicate, remove)
 - Grid size (2-256), voxel size, and world offset controls
 - Auto-orbit or manual orbit camera, axis/grid/reference-plane overlays
 - Per-stage timing statistics (parse, sign grid, composite, mesh build)
