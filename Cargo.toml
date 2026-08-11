@@ -6,7 +6,13 @@ resolver = "2"
 name = "hypervox"
 version = "0.1.0"
 edition = "2024"
+description = "Voxel graphical calculator for N-dimensional mathematical expressions"
+authors = ["timasoft <tima.klester@yandex.ru>"]
 license = "GPL-3.0-or-later"
+repository = "https://github.com/timasoft/hypervox"
+homepage = "https://github.com/timasoft/hypervox"
+keywords = ["voxel", "math", "calculator", "3d", "bevy"]
+categories = ["graphics", "visualization", "mathematics"]
 
 [profile.release]
 opt-level = "s"
