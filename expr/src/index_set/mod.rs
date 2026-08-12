@@ -10,7 +10,7 @@ use std::{
 };
 
 pub mod arith;
-pub use arith::{ArithIndexSet, ArithRangeFrom, ArithRangeIter};
+pub use arith::{ArithIndexSet, RangeFrom as ArithRangeFrom, RangeIter as ArithRangeIter};
 
 /// A compact bitset for tracking slot indices in CSE.
 ///
@@ -31,7 +31,7 @@ pub enum IndexSet {
 impl Default for IndexSet {
     #[inline]
     fn default() -> Self {
-        IndexSet::Small(0)
+        Self::Small(0)
     }
 }
 
@@ -46,18 +46,21 @@ impl IndexSet {
     /// assert!(!s.contains(4));
     /// ```
     #[inline]
+    #[must_use]
     pub fn singleton(slot: usize) -> Self {
+        #[expect(clippy::indexing_slicing)]
         if slot < 32 {
-            IndexSet::Small(1u32 << slot)
+            Self::Small(1_u32 << slot)
         } else if slot < 64 {
-            IndexSet::Medium(1u64 << slot)
+            Self::Medium(1_u64 << slot)
         } else if slot < 128 {
-            IndexSet::Large(1u128 << slot)
+            Self::Large(1_u128 << slot)
         } else {
-            let chunks = (slot / 64) + 1;
-            let mut vec = vec![0u64; chunks];
-            vec[slot / 64] |= 1u64 << (slot % 64);
-            IndexSet::Heap(vec)
+            let idx = slot / 64;
+            let chunks = idx + 1;
+            let mut vec = vec![0_u64; chunks];
+            vec[idx] |= 1_u64 << (slot % 64);
+            Self::Heap(vec)
         }
     }
 
@@ -77,74 +80,79 @@ impl IndexSet {
     /// ```
     pub fn insert(&mut self, slot: usize, value: bool) {
         match self {
-            IndexSet::Small(bits) => {
+            Self::Small(bits) => {
                 if slot < 32 {
                     if value {
-                        *bits |= 1u32 << slot;
+                        *bits |= 1_u32 << slot;
                     } else {
-                        *bits &= !(1u32 << slot);
+                        *bits &= !(1_u32 << slot);
                     }
                 } else if value {
+                    #[expect(clippy::indexing_slicing)]
                     if slot < 64 {
-                        *self = IndexSet::Medium((*bits as u64) | (1u64 << slot));
+                        *self = Self::Medium((u64::from(*bits)) | (1_u64 << slot));
                     } else if slot < 128 {
-                        *self = IndexSet::Large((*bits as u128) | (1u128 << slot));
+                        *self = Self::Large((u128::from(*bits)) | (1_u128 << slot));
                     } else {
-                        let chunks = (slot / 64) + 1;
-                        let mut vec = vec![0u64; chunks];
-                        vec[0] = *bits as u64;
-                        vec[slot / 64] |= 1u64 << (slot % 64);
-                        *self = IndexSet::Heap(vec);
+                        let idx = slot / 64;
+                        let chunks = idx + 1;
+                        let mut vec = vec![0_u64; chunks];
+                        vec[0] = u64::from(*bits);
+                        vec[idx] |= 1_u64 << (slot % 64);
+                        *self = Self::Heap(vec);
                     }
                 }
             }
-            IndexSet::Medium(bits) => {
+            Self::Medium(bits) => {
                 if slot < 64 {
                     if value {
-                        *bits |= 1u64 << slot;
+                        *bits |= 1_u64 << slot;
                     } else {
-                        *bits &= !(1u64 << slot);
+                        *bits &= !(1_u64 << slot);
                     }
                 } else if value {
+                    #[expect(clippy::indexing_slicing)]
                     if slot < 128 {
-                        *self = IndexSet::Large((*bits as u128) | (1u128 << slot));
+                        *self = Self::Large((u128::from(*bits)) | (1_u128 << slot));
                     } else {
-                        let chunks = (slot / 64) + 1;
-                        let mut vec = vec![0u64; chunks];
+                        let idx = slot / 64;
+                        let chunks = idx + 1;
+                        let mut vec = vec![0_u64; chunks];
                         vec[0] = *bits;
-                        vec[slot / 64] |= 1u64 << (slot % 64);
-                        *self = IndexSet::Heap(vec);
+                        vec[idx] |= 1_u64 << (slot % 64);
+                        *self = Self::Heap(vec);
                     }
                 }
             }
-            IndexSet::Large(bits) => {
+            #[expect(clippy::indexing_slicing)]
+            Self::Large(bits) => {
                 if slot < 128 {
                     if value {
-                        *bits |= 1u128 << slot;
+                        *bits |= 1_u128 << slot;
                     } else {
-                        *bits &= !(1u128 << slot);
+                        *bits &= !(1_u128 << slot);
                     }
                 } else if value {
-                    let chunks = (slot / 64) + 1;
-                    let mut vec = vec![0u64; chunks];
+                    let idx = slot / 64;
+                    let chunks = idx + 1;
+                    let mut vec = vec![0_u64; chunks];
                     vec[0] = *bits as u64;
-                    vec[1] = (*bits >> 64) as u64;
-                    vec[slot / 64] |= 1u64 << (slot % 64);
-                    *self = IndexSet::Heap(vec);
+                    vec[1] = (*bits >> 64_usize) as u64;
+                    vec[idx] |= 1_u64 << (slot % 64);
+                    *self = Self::Heap(vec);
                 }
             }
-            IndexSet::Heap(vec) => {
+            Self::Heap(vec) => {
                 let idx = slot / 64;
                 let bit = slot % 64;
+                #[expect(clippy::indexing_slicing)]
                 if value {
                     if idx >= vec.len() {
                         vec.resize(idx + 1, 0);
                     }
-                    vec[idx] |= 1u64 << bit;
-                } else {
-                    if idx < vec.len() {
-                        vec[idx] &= !(1u64 << bit);
-                    }
+                    vec[idx] |= 1_u64 << bit;
+                } else if idx < vec.len() {
+                    vec[idx] &= !(1_u64 << bit);
                 }
             }
         }
@@ -161,53 +169,46 @@ impl IndexSet {
     /// let c = IndexSet::singleton(0);
     /// assert!(!a.is_disjoint(&c));
     /// ```
+    #[must_use]
     pub fn is_disjoint(&self, other: &Self) -> bool {
         match (self, other) {
-            (IndexSet::Small(a), IndexSet::Small(b)) => (a & b) == 0,
-            (IndexSet::Small(a), IndexSet::Medium(b)) => ((*a as u64) & b) == 0,
-            (IndexSet::Medium(a), IndexSet::Small(b)) => (a & (*b as u64)) == 0,
-            (IndexSet::Small(a), IndexSet::Large(b)) => ((*a as u128) & b) == 0,
-            (IndexSet::Large(a), IndexSet::Small(b)) => (a & (*b as u128)) == 0,
-            (IndexSet::Medium(a), IndexSet::Medium(b)) => (a & b) == 0,
-            (IndexSet::Medium(a), IndexSet::Large(b)) => ((*a as u128) & b) == 0,
-            (IndexSet::Large(a), IndexSet::Medium(b)) => (a & (*b as u128)) == 0,
-            (IndexSet::Large(a), IndexSet::Large(b)) => (a & b) == 0,
-            (IndexSet::Heap(a), IndexSet::Heap(b)) => {
+            (Self::Small(a), Self::Small(b)) => (a & b) == 0,
+            (Self::Small(b), Self::Medium(a)) | (Self::Medium(a), Self::Small(b)) => {
+                (a & u64::from(*b)) == 0
+            }
+            (Self::Small(b), Self::Large(a)) | (Self::Large(a), Self::Small(b)) => {
+                (a & u128::from(*b)) == 0
+            }
+            (Self::Medium(a), Self::Medium(b)) => (a & b) == 0,
+            (Self::Medium(b), Self::Large(a)) | (Self::Large(a), Self::Medium(b)) => {
+                (a & u128::from(*b)) == 0
+            }
+            (Self::Large(a), Self::Large(b)) => (a & b) == 0,
+            (Self::Heap(a), Self::Heap(b)) => {
                 let min_len = a.len().min(b.len());
                 for i in 0..min_len {
+                    #[expect(clippy::indexing_slicing)]
                     if (a[i] & b[i]) != 0 {
                         return false;
                     }
                 }
                 true
             }
-            (IndexSet::Small(a), IndexSet::Heap(b)) => {
-                b.first().is_none_or(|&x| ((*a as u64) & x) == 0)
+            (Self::Small(b), Self::Heap(a)) | (Self::Heap(a), Self::Small(b)) => {
+                a.first().is_none_or(|&x| (x & u64::from(*b)) == 0)
             }
-            (IndexSet::Heap(a), IndexSet::Small(b)) => {
-                a.first().is_none_or(|&x| (x & (*b as u64)) == 0)
+            (Self::Medium(b), Self::Heap(a)) | (Self::Heap(a), Self::Medium(b)) => {
+                a.first().is_none_or(|&x| (x & b) == 0)
             }
-            (IndexSet::Medium(a), IndexSet::Heap(b)) => b.first().is_none_or(|&x| (a & x) == 0),
-            (IndexSet::Heap(a), IndexSet::Medium(b)) => a.first().is_none_or(|&x| (x & b) == 0),
-            (IndexSet::Large(a), IndexSet::Heap(b)) => {
-                if b.is_empty() {
-                    return true;
-                }
-                if (b[0] & (*a as u64)) != 0 {
-                    return false;
-                }
-                if b.len() > 1 && (b[1] & ((*a >> 64) as u64)) != 0 {
-                    return false;
-                }
-                true
-            }
-            (IndexSet::Heap(a), IndexSet::Large(b)) => {
+            (Self::Large(b), Self::Heap(a)) | (Self::Heap(a), Self::Large(b)) => {
                 if a.is_empty() {
                     return true;
                 }
+                #[expect(clippy::indexing_slicing)]
                 if (a[0] & (*b as u64)) != 0 {
                     return false;
                 }
+                #[expect(clippy::indexing_slicing)]
                 if a.len() > 1 && (a[1] & ((*b >> 64) as u64)) != 0 {
                     return false;
                 }
@@ -226,15 +227,17 @@ impl IndexSet {
     /// assert!(!s.contains(0));
     /// ```
     #[inline]
+    #[must_use]
     pub fn contains(&self, slot: usize) -> bool {
         match self {
-            IndexSet::Small(bits) => slot < 32 && (*bits & (1u32 << slot)) != 0,
-            IndexSet::Medium(bits) => slot < 64 && (*bits & (1u64 << slot)) != 0,
-            IndexSet::Large(bits) => slot < 128 && (*bits & (1u128 << slot)) != 0,
-            IndexSet::Heap(vec) => {
+            Self::Small(bits) => slot < 32 && (*bits & (1_u32 << slot)) != 0,
+            Self::Medium(bits) => slot < 64 && (*bits & (1_u64 << slot)) != 0,
+            Self::Large(bits) => slot < 128 && (*bits & (1_u128 << slot)) != 0,
+            #[expect(clippy::indexing_slicing)]
+            Self::Heap(vec) => {
                 let idx = slot / 64;
                 let bit = slot % 64;
-                idx < vec.len() && (vec[idx] & (1u64 << bit)) != 0
+                idx < vec.len() && (vec[idx] & (1_u64 << bit)) != 0
             }
         }
     }
@@ -250,42 +253,27 @@ impl IndexSet {
     /// assert_eq!(slots, vec![2, 5]);
     /// ```
     #[inline]
-    pub fn iter<'a>(&'a self) -> IndexSetIter<'a> {
-        let max = self.max_chunks().saturating_sub(1);
-        IndexSetIter {
-            inner: self,
-            front_chunk: 0,
-            front_bits: self.get_first_chunk(),
-            back_chunk: max,
-            back_bits: if max == 0 {
-                self.get_first_chunk()
-            } else {
-                match self {
-                    IndexSet::Large(b) => (*b >> 64) as u64,
-                    IndexSet::Heap(v) => v.last().copied().unwrap_or(0),
-                    _ => unreachable!("Small/Medium have only one chunk"),
-                }
-            },
-            remaining: self.count_ones(),
-        }
+    #[must_use]
+    pub fn iter(&self) -> IndexSetIter<'_> {
+        self.into_iter()
     }
 
     #[inline]
     fn get_first_chunk(&self) -> u64 {
         match self {
-            IndexSet::Small(b) => *b as u64,
-            IndexSet::Medium(b) => *b,
-            IndexSet::Large(b) => *b as u64,
-            IndexSet::Heap(v) => v.first().copied().unwrap_or(0),
+            Self::Small(b) => u64::from(*b),
+            Self::Medium(b) => *b,
+            Self::Large(b) => *b as u64,
+            Self::Heap(v) => v.first().copied().unwrap_or(0),
         }
     }
 
     #[inline]
-    fn max_chunks(&self) -> usize {
+    const fn max_chunks(&self) -> usize {
         match self {
-            IndexSet::Small(_) | IndexSet::Medium(_) => 1,
-            IndexSet::Large(_) => 2,
-            IndexSet::Heap(vec) => vec.len(),
+            Self::Small(_) | Self::Medium(_) => 1,
+            Self::Large(_) => 2,
+            Self::Heap(vec) => vec.len(),
         }
     }
 
@@ -300,12 +288,13 @@ impl IndexSet {
     /// assert_eq!(s.count_ones(), 3);
     /// ```
     #[inline]
+    #[must_use]
     pub fn count_ones(&self) -> usize {
         match self {
-            IndexSet::Small(bits) => bits.count_ones() as usize,
-            IndexSet::Medium(bits) => bits.count_ones() as usize,
-            IndexSet::Large(bits) => bits.count_ones() as usize,
-            IndexSet::Heap(vec) => vec.iter().map(|&x| x.count_ones() as usize).sum(),
+            Self::Small(bits) => bits.count_ones() as usize,
+            Self::Medium(bits) => bits.count_ones() as usize,
+            Self::Large(bits) => bits.count_ones() as usize,
+            Self::Heap(vec) => vec.iter().map(|&x| x.count_ones() as usize).sum(),
         }
     }
 
@@ -320,12 +309,13 @@ impl IndexSet {
     /// assert!(!s.is_empty());
     /// ```
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
-            IndexSet::Small(bits) => *bits == 0,
-            IndexSet::Medium(bits) => *bits == 0,
-            IndexSet::Large(bits) => *bits == 0,
-            IndexSet::Heap(vec) => vec.iter().all(|&x| x == 0),
+            Self::Small(bits) => *bits == 0,
+            Self::Medium(bits) => *bits == 0,
+            Self::Large(bits) => *bits == 0,
+            Self::Heap(vec) => vec.iter().all(|&x| x == 0),
         }
     }
 
@@ -340,6 +330,7 @@ impl IndexSet {
     /// assert!(matches!(s, IndexSet::Small(_)));
     /// ```
     #[inline]
+    #[must_use]
     pub fn minimized(mut self) -> Self {
         self.minimize();
         self
@@ -358,36 +349,38 @@ impl IndexSet {
     /// ```
     pub fn minimize(&mut self) {
         *self = match std::mem::take(self) {
-            IndexSet::Heap(mut vec) => {
-                let last = vec.iter().rposition(|&x| x != 0);
-                match last {
-                    None => IndexSet::Small(0),
+            Self::Heap(mut vec) => {
+                let last_option = vec.iter().rposition(|&x| x != 0);
+                match last_option {
+                    None => Self::Small(0),
                     Some(0) => {
+                        #[expect(clippy::indexing_slicing)]
                         let v = vec[0];
-                        if v as u32 as u64 == v {
-                            IndexSet::Small(v as u32)
+                        let v_u32 = v as u32;
+                        if u64::from(v_u32) == v {
+                            Self::Small(v_u32)
                         } else {
-                            IndexSet::Medium(v)
+                            Self::Medium(v)
                         }
                     }
-                    Some(1) => IndexSet::Large((vec[0] as u128) | ((vec[1] as u128) << 64)),
-                    _ => {
-                        vec.truncate(last.unwrap() + 1);
-                        IndexSet::Heap(vec)
+                    #[expect(clippy::indexing_slicing)]
+                    Some(1) => Self::Large(u128::from(vec[0]) | (u128::from(vec[1]) << 64)),
+                    Some(last) => {
+                        vec.truncate(last.saturating_add(1));
+                        Self::Heap(vec)
                     }
                 }
             }
-            IndexSet::Large(0) => IndexSet::Small(0),
-            IndexSet::Large(v) if (v as u64 as u128) == v => {
+            Self::Large(0) | Self::Medium(0) => Self::Small(0),
+            Self::Large(v) if u128::from(v as u64) == v => {
                 let low = v as u64;
-                if low as u32 as u64 == low {
-                    IndexSet::Small(low as u32)
+                if u64::from(low as u32) == low {
+                    Self::Small(low as u32)
                 } else {
-                    IndexSet::Medium(low)
+                    Self::Medium(low)
                 }
             }
-            IndexSet::Medium(0) => IndexSet::Small(0),
-            IndexSet::Medium(v) if (v as u32 as u64) == v => IndexSet::Small(v as u32),
+            Self::Medium(v) if u64::from(v as u32) == v => Self::Small(v as u32),
             other => other,
         };
     }
@@ -396,7 +389,7 @@ impl IndexSet {
 impl From<IndexSet> for Vec<u64> {
     fn from(set: IndexSet) -> Self {
         match set {
-            IndexSet::Small(bits) => vec![bits as u64],
+            IndexSet::Small(bits) => vec![u64::from(bits)],
             IndexSet::Medium(bits) => vec![bits],
             IndexSet::Large(bits) => vec![bits as u64, (bits >> 64) as u64],
             IndexSet::Heap(vec) => vec,
@@ -407,9 +400,9 @@ impl From<IndexSet> for Vec<u64> {
 impl PartialEq for IndexSet {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (IndexSet::Small(a), IndexSet::Small(b)) => a == b,
-            (IndexSet::Medium(a), IndexSet::Medium(b)) => a == b,
-            (IndexSet::Large(a), IndexSet::Large(b)) => a == b,
+            (Self::Small(a), Self::Small(b)) => a == b,
+            (Self::Medium(a), Self::Medium(b)) => a == b,
+            (Self::Large(a), Self::Large(b)) => a == b,
             _ => self.iter().eq(other.iter()),
         }
     }
@@ -424,9 +417,9 @@ impl PartialOrd for IndexSet {
 impl Ord for IndexSet {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (IndexSet::Small(a), IndexSet::Small(b)) => a.cmp(b),
-            (IndexSet::Medium(a), IndexSet::Medium(b)) => a.cmp(b),
-            (IndexSet::Large(a), IndexSet::Large(b)) => a.cmp(b),
+            (Self::Small(a), Self::Small(b)) => a.cmp(b),
+            (Self::Medium(a), Self::Medium(b)) => a.cmp(b),
+            (Self::Large(a), Self::Large(b)) => a.cmp(b),
             // Compare from the highest bit down — same as integer cmp.
             _ => self.iter().rev().cmp(other.iter().rev()),
         }
@@ -438,7 +431,7 @@ impl Hash for IndexSet {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.count_ones().hash(state);
 
-        for idx in self.iter() {
+        for idx in self {
             idx.hash(state);
         }
     }
@@ -449,71 +442,53 @@ impl BitOr for IndexSet {
 
     fn bitor(self, rhs: Self) -> Self {
         match (self, rhs) {
-            (IndexSet::Small(a), IndexSet::Small(b)) => IndexSet::Small(a | b),
-            (IndexSet::Small(a), IndexSet::Medium(b)) => IndexSet::Medium((a as u64) | b),
-            (IndexSet::Medium(a), IndexSet::Small(b)) => IndexSet::Medium(a | (b as u64)),
-            (IndexSet::Small(a), IndexSet::Large(b)) => IndexSet::Large((a as u128) | b),
-            (IndexSet::Large(a), IndexSet::Small(b)) => IndexSet::Large(a | (b as u128)),
-            (IndexSet::Small(a), IndexSet::Heap(mut b)) => {
-                if b.is_empty() {
-                    b.push(a as u64);
-                } else {
-                    b[0] |= a as u64;
-                }
-                IndexSet::Heap(b)
+            (Self::Small(a), Self::Small(b)) => Self::Small(a | b),
+            (Self::Small(b), Self::Medium(a)) | (Self::Medium(a), Self::Small(b)) => {
+                Self::Medium(a | u64::from(b))
             }
-            (IndexSet::Heap(mut a), IndexSet::Small(b)) => {
+            (Self::Small(b), Self::Large(a)) | (Self::Large(a), Self::Small(b)) => {
+                Self::Large(a | u128::from(b))
+            }
+            (Self::Small(b), Self::Heap(mut a)) | (Self::Heap(mut a), Self::Small(b)) => {
+                #[expect(clippy::indexing_slicing)]
                 if a.is_empty() {
-                    a.push(b as u64);
+                    a.push(u64::from(b));
                 } else {
-                    a[0] |= b as u64;
+                    a[0] |= u64::from(b);
                 }
-                IndexSet::Heap(a)
+                Self::Heap(a)
             }
-            (IndexSet::Medium(a), IndexSet::Medium(b)) => IndexSet::Medium(a | b),
-            (IndexSet::Medium(a), IndexSet::Large(b)) => IndexSet::Large((a as u128) | b),
-            (IndexSet::Large(a), IndexSet::Medium(b)) => IndexSet::Large(a | (b as u128)),
-            (IndexSet::Medium(a), IndexSet::Heap(mut b)) => {
-                if b.is_empty() {
-                    b.push(a);
-                } else {
-                    b[0] |= a;
-                }
-                IndexSet::Heap(b)
+            (Self::Medium(a), Self::Medium(b)) => Self::Medium(a | b),
+            (Self::Medium(b), Self::Large(a)) | (Self::Large(a), Self::Medium(b)) => {
+                Self::Large(a | u128::from(b))
             }
-            (IndexSet::Heap(mut a), IndexSet::Medium(b)) => {
+            (Self::Medium(b), Self::Heap(mut a)) | (Self::Heap(mut a), Self::Medium(b)) => {
+                #[expect(clippy::indexing_slicing)]
                 if a.is_empty() {
                     a.push(b);
                 } else {
                     a[0] |= b;
                 }
-                IndexSet::Heap(a)
+                Self::Heap(a)
             }
-            (IndexSet::Large(a), IndexSet::Large(b)) => IndexSet::Large(a | b),
-            (IndexSet::Large(a), IndexSet::Heap(mut b)) => {
-                if b.len() < 2 {
-                    b.resize(2, 0);
-                }
-                b[0] |= a as u64;
-                b[1] |= (a >> 64) as u64;
-                IndexSet::Heap(b)
-            }
-            (IndexSet::Heap(mut a), IndexSet::Large(b)) => {
+            (Self::Large(a), Self::Large(b)) => Self::Large(a | b),
+            #[expect(clippy::indexing_slicing)]
+            (Self::Large(b), Self::Heap(mut a)) | (Self::Heap(mut a), Self::Large(b)) => {
                 if a.len() < 2 {
                     a.resize(2, 0);
                 }
                 a[0] |= b as u64;
                 a[1] |= (b >> 64) as u64;
-                IndexSet::Heap(a)
+                Self::Heap(a)
             }
-            (IndexSet::Heap(mut a), IndexSet::Heap(b)) => {
+            (Self::Heap(mut a), Self::Heap(b)) => {
                 if a.len() < b.len() {
                     a.resize(b.len(), 0);
                 }
                 for (x, y) in a.iter_mut().zip(b.iter()) {
                     *x |= *y;
                 }
-                IndexSet::Heap(a)
+                Self::Heap(a)
             }
         }
     }
@@ -531,68 +506,50 @@ impl BitAnd for IndexSet {
 
     fn bitand(self, rhs: Self) -> Self {
         match (self, rhs) {
-            (IndexSet::Small(a), IndexSet::Small(b)) => IndexSet::Small(a & b),
-            (IndexSet::Small(a), IndexSet::Medium(b)) => IndexSet::Small((a as u64 & b) as u32),
-            (IndexSet::Medium(a), IndexSet::Small(b)) => IndexSet::Small((a & (b as u64)) as u32),
-            (IndexSet::Small(a), IndexSet::Large(b)) => IndexSet::Small((a as u128 & b) as u32),
-            (IndexSet::Large(a), IndexSet::Small(b)) => IndexSet::Small((a & (b as u128)) as u32),
-            (IndexSet::Small(a), IndexSet::Heap(b)) => {
-                if b.is_empty() {
-                    IndexSet::default()
-                } else {
-                    IndexSet::Small((a as u64 & b[0]) as u32)
-                }
+            (Self::Small(a), Self::Small(b)) => Self::Small(a & b),
+            (Self::Small(b), Self::Medium(a)) | (Self::Medium(a), Self::Small(b)) => {
+                Self::Small((a & u64::from(b)) as u32)
             }
-            (IndexSet::Heap(a), IndexSet::Small(b)) => {
+            (Self::Small(b), Self::Large(a)) | (Self::Large(a), Self::Small(b)) => {
+                Self::Small((a & u128::from(b)) as u32)
+            }
+            #[expect(clippy::indexing_slicing)]
+            (Self::Small(b), Self::Heap(a)) | (Self::Heap(a), Self::Small(b)) => {
                 if a.is_empty() {
-                    IndexSet::default()
+                    Self::default()
                 } else {
-                    IndexSet::Small((a[0] & (b as u64)) as u32)
+                    Self::Small((a[0] & u64::from(b)) as u32)
                 }
             }
-            (IndexSet::Medium(a), IndexSet::Medium(b)) => IndexSet::Medium(a & b),
-            (IndexSet::Medium(a), IndexSet::Large(b)) => IndexSet::Medium((a as u128 & b) as u64),
-            (IndexSet::Large(a), IndexSet::Medium(b)) => IndexSet::Medium((a & (b as u128)) as u64),
-            (IndexSet::Medium(a), IndexSet::Heap(b)) => {
-                if b.is_empty() {
-                    IndexSet::Medium(0)
-                } else {
-                    IndexSet::Medium(a & b[0])
-                }
+            (Self::Medium(a), Self::Medium(b)) => Self::Medium(a & b),
+            (Self::Medium(b), Self::Large(a)) | (Self::Large(a), Self::Medium(b)) => {
+                Self::Medium((a & u128::from(b)) as u64)
             }
-            (IndexSet::Heap(a), IndexSet::Medium(b)) => {
+            #[expect(clippy::indexing_slicing)]
+            (Self::Medium(b), Self::Heap(a)) | (Self::Heap(a), Self::Medium(b)) => {
                 if a.is_empty() {
-                    IndexSet::Medium(0)
+                    Self::Medium(0)
                 } else {
-                    IndexSet::Medium(a[0] & b)
+                    Self::Medium(a[0] & b)
                 }
             }
-            (IndexSet::Large(a), IndexSet::Large(b)) => IndexSet::Large(a & b),
-            (IndexSet::Large(a), IndexSet::Heap(b)) => {
-                let lo = b.first().map(|&x| a as u64 & x).unwrap_or(0);
-                let hi = b.get(1).map(|&x| (a >> 64) as u64 & x).unwrap_or(0);
+            (Self::Large(a), Self::Large(b)) => Self::Large(a & b),
+            (Self::Large(b), Self::Heap(a)) | (Self::Heap(a), Self::Large(b)) => {
+                let lo = a.first().map_or(0, |&x| x & (b as u64));
+                let hi = a.get(1).map_or(0, |&x| x & ((b >> 64_usize) as u64));
                 if hi == 0 {
-                    IndexSet::Medium(lo)
+                    Self::Medium(lo)
                 } else {
-                    IndexSet::Large((lo as u128) | ((hi as u128) << 64))
+                    Self::Large(u128::from(lo) | (u128::from(hi) << 64))
                 }
             }
-            (IndexSet::Heap(a), IndexSet::Large(b)) => {
-                let lo = a.first().map(|&x| x & (b as u64)).unwrap_or(0);
-                let hi = a.get(1).map(|&x| x & ((b >> 64) as u64)).unwrap_or(0);
-                if hi == 0 {
-                    IndexSet::Medium(lo)
-                } else {
-                    IndexSet::Large((lo as u128) | ((hi as u128) << 64))
-                }
-            }
-            (IndexSet::Heap(mut a), IndexSet::Heap(b)) => {
+            (Self::Heap(mut a), Self::Heap(b)) => {
                 let min_len = a.len().min(b.len());
                 a.truncate(min_len);
                 for (x, y) in a.iter_mut().zip(b.iter()) {
                     *x &= *y;
                 }
-                IndexSet::Heap(a)
+                Self::Heap(a)
             }
         }
         .minimized()
@@ -611,11 +568,11 @@ fn heap_shl(vec: Vec<u64>, rhs: usize) -> IndexSet {
     let chunk_shift = rhs / 64;
     let bit_shift = rhs % 64;
     let mut new_vec = Vec::with_capacity(chunk_shift + vec.len() + 1);
-    new_vec.extend(std::iter::repeat_n(0u64, chunk_shift));
+    new_vec.extend(std::iter::repeat_n(0_u64, chunk_shift));
     if bit_shift == 0 {
         new_vec.extend(vec);
     } else {
-        let mut carry = 0u64;
+        let mut carry = 0_u64;
         for v in vec {
             let val = (v << bit_shift) | carry;
             carry = v >> (64 - bit_shift);
@@ -636,45 +593,45 @@ impl Shl<usize> for IndexSet {
             return self;
         }
         match self {
-            IndexSet::Small(bits) => {
-                let val = bits as u128;
+            Self::Small(bits) => {
+                let val = u128::from(bits);
                 if (val.leading_zeros() as usize) < rhs {
-                    heap_shl(vec![bits as u64], rhs)
+                    heap_shl(vec![u64::from(bits)], rhs)
                 } else {
                     let shifted = val << rhs;
-                    if shifted as u32 as u128 == shifted {
-                        IndexSet::Small(shifted as u32)
-                    } else if shifted as u64 as u128 == shifted {
-                        IndexSet::Medium(shifted as u64)
+                    if u128::from(shifted as u32) == shifted {
+                        Self::Small(shifted as u32)
+                    } else if u128::from(shifted as u64) == shifted {
+                        Self::Medium(shifted as u64)
                     } else {
-                        IndexSet::Large(shifted)
+                        Self::Large(shifted)
                     }
                 }
             }
-            IndexSet::Medium(bits) => {
-                let val = bits as u128;
+            Self::Medium(bits) => {
+                let val = u128::from(bits);
                 if (val.leading_zeros() as usize) < rhs {
                     heap_shl(vec![bits], rhs)
                 } else {
                     let shifted = val << rhs;
-                    if shifted as u64 as u128 == shifted {
-                        IndexSet::Medium(shifted as u64)
+                    if u128::from(shifted as u64) == shifted {
+                        Self::Medium(shifted as u64)
                     } else {
-                        IndexSet::Large(shifted)
+                        Self::Large(shifted)
                     }
                 }
             }
-            IndexSet::Large(bits) => {
+            Self::Large(bits) => {
                 if (bits.leading_zeros() as usize) < rhs {
                     let lo = bits as u64;
                     let hi = (bits >> 64) as u64;
                     let vec = if hi != 0 { vec![lo, hi] } else { vec![lo] };
                     heap_shl(vec, rhs)
                 } else {
-                    IndexSet::Large(bits << rhs)
+                    Self::Large(bits << rhs)
                 }
             }
-            IndexSet::Heap(vec) => heap_shl(vec, rhs),
+            Self::Heap(vec) => heap_shl(vec, rhs),
         }
     }
 }
@@ -694,46 +651,49 @@ impl Shr<usize> for IndexSet {
             return self;
         }
         match self {
-            IndexSet::Small(bits) => {
+            Self::Small(bits) => {
                 if rhs >= 32 {
-                    IndexSet::Small(0)
+                    Self::Small(0)
                 } else {
-                    IndexSet::Small(bits >> rhs)
+                    Self::Small(bits >> rhs)
                 }
             }
-            IndexSet::Medium(bits) => {
+            Self::Medium(bits) => {
                 if rhs >= 64 {
-                    IndexSet::Small(0)
+                    Self::Small(0)
                 } else {
-                    IndexSet::Medium(bits >> rhs)
+                    Self::Medium(bits >> rhs)
                 }
             }
-            IndexSet::Large(bits) => {
+            Self::Large(bits) => {
                 if rhs >= 128 {
-                    IndexSet::Small(0)
+                    Self::Small(0)
                 } else {
-                    IndexSet::Large(bits >> rhs)
+                    Self::Large(bits >> rhs)
                 }
             }
-            IndexSet::Heap(vec) => {
+            Self::Heap(vec) => {
                 let chunk_shift = rhs / 64;
                 let bit_shift = rhs % 64;
                 if chunk_shift >= vec.len() {
-                    return IndexSet::Small(0);
+                    return Self::Small(0);
                 }
+                #[expect(clippy::indexing_slicing)]
                 let remaining = &vec[chunk_shift..];
                 if bit_shift == 0 {
-                    IndexSet::Heap(remaining.to_vec())
+                    Self::Heap(remaining.to_vec())
                 } else {
                     let mut new_vec = Vec::with_capacity(remaining.len());
                     for i in 0..remaining.len() {
+                        #[expect(clippy::indexing_slicing)]
                         let mut val = remaining[i] >> bit_shift;
-                        if i + 1 < remaining.len() {
-                            val |= remaining[i + 1] << (64 - bit_shift);
+                        #[expect(clippy::indexing_slicing)]
+                        if i.saturating_add(1) < remaining.len() {
+                            val |= remaining[i.saturating_add(1)] << (64 - bit_shift);
                         }
                         new_vec.push(val);
                     }
-                    IndexSet::Heap(new_vec)
+                    Self::Heap(new_vec)
                 }
             }
         }
@@ -765,7 +725,7 @@ impl IndexSetIter<'_> {
     #[inline]
     fn chunk_bits(&self, chunk: usize) -> u64 {
         match self.inner {
-            IndexSet::Small(bits) if chunk == 0 => *bits as u64,
+            IndexSet::Small(bits) if chunk == 0 => u64::from(*bits),
             IndexSet::Medium(bits) if chunk == 0 => *bits,
             IndexSet::Large(bits) if chunk == 0 => *bits as u64,
             IndexSet::Large(bits) if chunk == 1 => (*bits >> 64) as u64,
@@ -775,7 +735,34 @@ impl IndexSetIter<'_> {
     }
 }
 
-impl<'a> Iterator for IndexSetIter<'a> {
+impl<'a> IntoIterator for &'a IndexSet {
+    type Item = usize;
+
+    type IntoIter = IndexSetIter<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        let max = self.max_chunks().saturating_sub(1);
+        IndexSetIter {
+            inner: self,
+            front_chunk: 0,
+            front_bits: self.get_first_chunk(),
+            back_chunk: max,
+            back_bits: if max == 0 {
+                self.get_first_chunk()
+            } else {
+                match self {
+                    IndexSet::Large(b) => (*b >> 64) as u64,
+                    IndexSet::Heap(v) => v.last().copied().unwrap_or(0),
+                    _ => unreachable!("Small/Medium have only one chunk"),
+                }
+            },
+            remaining: self.count_ones(),
+        }
+    }
+}
+
+impl Iterator for IndexSetIter<'_> {
     type Item = usize;
 
     #[inline]
@@ -783,20 +770,20 @@ impl<'a> Iterator for IndexSetIter<'a> {
         loop {
             if self.front_bits != 0 {
                 let tz = self.front_bits.trailing_zeros() as usize;
-                let mask = 1u64 << tz;
+                let mask = 1_u64 << tz;
                 self.front_bits &= !mask;
                 if self.front_chunk == self.back_chunk {
                     self.back_bits &= !mask;
                 }
-                self.remaining -= 1;
-                return Some(self.front_chunk * 64 + tz);
+                self.remaining = self.remaining.wrapping_sub(1);
+                return Some(self.front_chunk.wrapping_mul(64).wrapping_add(tz));
             }
 
             if self.remaining == 0 {
                 return None;
             }
 
-            self.front_chunk += 1;
+            self.front_chunk = self.front_chunk.wrapping_add(1);
             self.front_bits = self.chunk_bits(self.front_chunk);
         }
     }
@@ -807,19 +794,19 @@ impl<'a> Iterator for IndexSetIter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for IndexSetIter<'a> {
+impl DoubleEndedIterator for IndexSetIter<'_> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             if self.back_bits != 0 {
                 let lz = self.back_bits.ilog2() as usize;
-                let mask = 1u64 << lz;
+                let mask = 1_u64 << lz;
                 self.back_bits &= !mask;
                 if self.front_chunk == self.back_chunk {
                     self.front_bits &= !mask;
                 }
-                self.remaining -= 1;
-                return Some(self.back_chunk * 64 + lz);
+                self.remaining = self.remaining.wrapping_sub(1);
+                return Some(self.back_chunk.wrapping_mul(64).wrapping_add(lz));
             }
 
             if self.remaining == 0 {
@@ -830,12 +817,12 @@ impl<'a> DoubleEndedIterator for IndexSetIter<'a> {
                 self.remaining = 0;
                 return None;
             }
-            self.back_chunk -= 1;
+            self.back_chunk = self.back_chunk.wrapping_sub(1);
             self.back_bits = self.chunk_bits(self.back_chunk);
         }
     }
 }
 
-impl<'a> ExactSizeIterator for IndexSetIter<'a> {}
+impl ExactSizeIterator for IndexSetIter<'_> {}
 
-impl<'a> FusedIterator for IndexSetIter<'a> {}
+impl FusedIterator for IndexSetIter<'_> {}

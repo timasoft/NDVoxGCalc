@@ -14,12 +14,12 @@ impl VarMap for TestVars {
     fn resolve_alias(&self, name: &str) -> Option<usize> {
         match name {
             "x" => Some(0),
-            "y" => Some(if self.ndim > 1 { 1 } else { 0 }),
+            "y" => Some(usize::from(self.ndim > 1)),
             "z" => Some(if self.ndim > 2 { 2 } else { 0 }),
             _ => None,
         }
     }
-    fn primary_prefix(&self) -> &str {
+    fn primary_prefix(&self) -> &'static str {
         "x"
     }
 }
@@ -30,61 +30,92 @@ const FAST_BENCH_SIDE: usize = 128;
 const SLOW_BENCH_SIDE: usize = 64;
 
 #[inline(never)]
-fn direct_simple(x: f64, y: f64, z: f64) -> f64 {
-    x + y * z
+const fn direct_simple(x: f64, y: f64, z: f64) -> f64 {
+    y.mul_add(z, x)
 }
 
 #[inline(never)]
 fn direct_medium(x: f64, y: f64, z: f64) -> f64 {
-    x.sin() + y.cos() * (z * z) + (x * x + y * y).sqrt()
+    y.cos().mul_add(z * z, x.sin()) + x.hypot(y)
 }
 
 #[inline(never)]
 fn direct_heavy(x: f64, y: f64, z: f64) -> f64 {
     (x.sin() * y.cos()).exp()
-        + (z * z + 1.0).ln()
-        + ((x * x + y * y + z * z).sqrt()).atan2(black_box(1.0))
+        + z.mul_add(z, 1.0).ln()
+        + (z.mul_add(z, y.mul_add(y, x * x)).sqrt()).atan2(black_box(1.0))
         + (x + y).abs().sqrt()
 }
 
 #[inline(never)]
 fn direct_repeated(x: f64, y: f64, _z: f64) -> f64 {
-    (x * x + y * y) * (x * x + y * y) + (x * x + y * y).sin()
+    y.mul_add(y, x * x)
+        .mul_add(y.mul_add(y, x * x), y.mul_add(y, x * x).sin())
 }
 
 #[inline(never)]
 fn direct_very_heavy(x: f64, y: f64, z: f64) -> f64 {
-    let r2 = x * x + y * y + z * z;
+    let r2 = z.mul_add(z, y.mul_add(y, x * x));
     let sqrt_r2 = r2.sqrt();
-    (-sqrt_r2 / (1.0 + sqrt_r2)).exp()
-        * (sqrt_r2 + sqrt_r2.cos() * (sqrt_r2 / (1.0 + sqrt_r2)).tanh()).sin()
-        + (1.0
-            + (x.sin() * y.cos()
-                + y.sin() * z.cos()
-                + z.sin() * x.cos()
-                + x.sin() * y.sin() * z.sin())
-            .abs())
-        .ln()
-            * ((1.0 + r2 + r2.sin() * r2.cos()).sqrt()).atan2(
-                1.0 + (x.sin() * x.sin()
-                    + y.cos() * y.cos()
-                    + z.tanh() * z.tanh()
-                    + x.sin() * z.sin()
-                    + y.cos() * z.cos())
-                .abs(),
+    ((x.sin() * y.cos()).mul_add(
+        z.tanh(),
+        (z.tanh() * z.tanh()).mul_add(
+            z.tanh(),
+            (y.cos() * y.cos()).mul_add(y.cos(), x.sin() * x.sin() * x.sin()),
+        ),
+    ) / (1.0 + (x.sin() * y.cos() * z.tanh()).abs()))
+    .mul_add(
+        z.tanh()
+            .mul_add(
+                z.tanh(),
+                y.cos().mul_add(y.cos(), x.sin().mul_add(x.sin(), 1.0)),
             )
-        + ((x * x + y * y).sin() * (y * y + z * z).cos() * (z * z + x * x).sin()
-            + (x * x + y * y).cos() * (y * y + z * z).sin() * (z * z + x * x).cos())
-        .tanh()
-            / (1.0 + (r2.cos() + r2.sin() * r2.sin()).abs())
-        + (1.0 + (r2.sin() * r2.cos() - (r2 / (1.0 + r2)).tanh()).abs()).cbrt()
-            * ((1.0 + r2).sqrt() / (1.0 + sqrt_r2)).atan()
-        + (x.sin() * x.sin() * x.sin()
-            + y.cos() * y.cos() * y.cos()
-            + z.tanh() * z.tanh() * z.tanh()
-            + x.sin() * y.cos() * z.tanh())
-            / (1.0 + (x.sin() * y.cos() * z.tanh()).abs())
-            * (1.0 + x.sin() * x.sin() + y.cos() * y.cos() + z.tanh() * z.tanh()).sqrt()
+            .sqrt(),
+        (1.0 + r2.sin().mul_add(r2.cos(), -(r2 / (1.0 + r2)).tanh()).abs())
+            .cbrt()
+            .mul_add(
+                ((1.0 + r2).sqrt() / (1.0 + sqrt_r2)).atan(),
+                (x.sin() * y.sin())
+                    .mul_add(
+                        z.sin(),
+                        z.sin()
+                            .mul_add(x.cos(), y.sin().mul_add(z.cos(), x.sin() * y.cos())),
+                    )
+                    .abs()
+                    .ln_1p()
+                    .mul_add(
+                        (r2.sin().mul_add(r2.cos(), 1.0 + r2).sqrt()).atan2(
+                            1.0 + y
+                                .cos()
+                                .mul_add(
+                                    z.cos(),
+                                    x.sin().mul_add(
+                                        z.sin(),
+                                        z.tanh().mul_add(
+                                            z.tanh(),
+                                            y.cos().mul_add(y.cos(), x.sin() * x.sin()),
+                                        ),
+                                    ),
+                                )
+                                .abs(),
+                        ),
+                        (-sqrt_r2 / (1.0 + sqrt_r2)).exp()
+                            * sqrt_r2
+                                .cos()
+                                .mul_add((sqrt_r2 / (1.0 + sqrt_r2)).tanh(), sqrt_r2)
+                                .sin(),
+                    )
+                    + (y.mul_add(y, x * x).cos() * z.mul_add(z, y * y).sin())
+                        .mul_add(
+                            x.mul_add(x, z * z).cos(),
+                            y.mul_add(y, x * x).sin()
+                                * z.mul_add(z, y * y).cos()
+                                * x.mul_add(x, z * z).sin(),
+                        )
+                        .tanh()
+                        / (1.0 + r2.sin().mul_add(r2.sin(), r2.cos()).abs()),
+            ),
+    )
 }
 
 struct Case {
@@ -193,11 +224,14 @@ where
 {
     let mut sum = 0.0_f64;
     for nz in 0..side {
-        let zv = nz as f64 * scale - 5.0;
+        #[expect(clippy::cast_precision_loss)]
+        let zv = (nz as f64).mul_add(scale, -5.0);
         for ny in 0..side {
-            let yv = ny as f64 * scale - 5.0;
+            #[expect(clippy::cast_precision_loss)]
+            let yv = (ny as f64).mul_add(scale, -5.0);
             for nx in 0..side {
-                let xv = nx as f64 * scale - 5.0;
+                #[expect(clippy::cast_precision_loss)]
+                let xv = (nx as f64).mul_add(scale, -5.0);
                 sum += black_box(f(black_box(xv), black_box(yv), black_box(zv)));
             }
         }
@@ -211,14 +245,14 @@ fn bench_compile_time(c: &mut Criterion, name: &str, expr_src: &str) {
     group.bench_function("parse", |b| {
         b.iter_batched(
             || (),
-            |_| black_box(parse(expr_src, &D3).unwrap()),
+            |()| black_box(parse(expr_src, &D3).expect("expression should be valid")),
             criterion::BatchSize::SmallInput,
         );
     });
 
     group.bench_function("pre_eval", |b| {
         b.iter_batched(
-            || parse(expr_src, &D3).unwrap(),
+            || parse(expr_src, &D3).expect("expression should be valid"),
             |mut node| {
                 node.pre_eval(&[]);
                 black_box(node)
@@ -230,7 +264,7 @@ fn bench_compile_time(c: &mut Criterion, name: &str, expr_src: &str) {
     group.bench_function("cse", |b| {
         b.iter_batched(
             || {
-                let mut node = parse(expr_src, &D3).unwrap();
+                let mut node = parse(expr_src, &D3).expect("expression should be valid");
                 node.pre_eval(&[]);
                 node
             },
@@ -245,7 +279,7 @@ fn bench_compile_time(c: &mut Criterion, name: &str, expr_src: &str) {
     group.bench_function("compile", |b| {
         b.iter_batched(
             || {
-                let mut node = parse(expr_src, &D3).unwrap();
+                let mut node = parse(expr_src, &D3).expect("expression should be valid");
                 node.pre_eval(&[]);
                 node
             },
@@ -257,7 +291,7 @@ fn bench_compile_time(c: &mut Criterion, name: &str, expr_src: &str) {
     group.bench_function("compile_multi", |b| {
         b.iter_batched(
             || {
-                let mut node = parse(expr_src, &D3).unwrap();
+                let mut node = parse(expr_src, &D3).expect("expression should be valid");
                 node.pre_eval(&[]);
                 node
             },
@@ -268,7 +302,7 @@ fn bench_compile_time(c: &mut Criterion, name: &str, expr_src: &str) {
 
     group.bench_function("prepare", |b| {
         b.iter_batched(
-            || parse(expr_src, &D3).unwrap(),
+            || parse(expr_src, &D3).expect("expression should be valid"),
             |mut node| black_box(node.prepare(&[])),
             criterion::BatchSize::SmallInput,
         );
@@ -276,7 +310,7 @@ fn bench_compile_time(c: &mut Criterion, name: &str, expr_src: &str) {
 
     group.bench_function("prepare_multi", |b| {
         b.iter_batched(
-            || parse(expr_src, &D3).unwrap(),
+            || parse(expr_src, &D3).expect("expression should be valid"),
             |mut node| black_box(node.prepare_multi(&[], &[0, 1, 2])),
             criterion::BatchSize::SmallInput,
         );
@@ -292,7 +326,8 @@ fn bench_expression(
     direct_fn: fn(f64, f64, f64) -> f64,
 ) {
     let side = FAST_BENCH_SIDE;
-    let scale = 10.0 / side as f64;
+    #[expect(clippy::cast_precision_loss)]
+    let scale = 10.0_f64 / side as f64;
 
     let mut node_flat = parse(expr_src, &D3).expect("parse failed");
     node_flat.pre_eval(&[]);
@@ -306,15 +341,15 @@ fn bench_expression(
 
     // Sanity check
     {
-        let vars = [1.5, 2.5, -3.0];
-        let mut cache = vec![0.0; multi.cse_slots];
+        let vars = [1.5_f64, 2.5_f64, -3.0_f64];
+        let mut cache = vec![0.0_f64; multi.cse_slots];
         for g in &multi.groups {
             (g.combined)(&vars, &mut cache);
         }
         let compiled_val = (multi.main)(&vars, &mut cache);
         let direct_val = direct_fn(vars[0], vars[1], vars[2]);
         assert!(
-            (compiled_val - direct_val).abs() < 1e-12,
+            (compiled_val - direct_val).abs() < 1e-12_f64,
             "sanity fail for {name}: compiled={compiled_val}, direct={direct_val}"
         );
     }
@@ -326,27 +361,28 @@ fn bench_expression(
         b.iter(|| run_triple_loop(side, scale, direct_fn));
     });
 
-    let mut cache_flat = vec![0.0; 0];
+    let mut cache_flat = vec![0.0_f64; 0];
     group.bench_function("flat", |b| {
         let cache = &mut cache_flat;
         b.iter(|| run_triple_loop(side, scale, |x, y, z| flat_expr(&[x, y, z], cache)));
     });
 
-    let mut cache_cse = vec![0.0; cse_slots];
+    let mut cache_cse = vec![0.0_f64; cse_slots];
     group.bench_function("cse", |b| {
         let cache = &mut cache_cse;
         b.iter(|| run_triple_loop(side, scale, |x, y, z| cse_expr(&[x, y, z], cache)));
     });
 
-    let mut cache_multi = vec![0.0; multi.cse_slots];
+    let mut cache_multi = vec![0.0_f64; multi.cse_slots];
     group.bench_function("multi", |b| {
         let cache = &mut cache_multi;
         b.iter(|| {
             let mut sum = 0.0_f64;
-            let mut vars = [0.0; 3];
+            let mut vars = [0.0_f64; 3];
 
+            #[expect(clippy::cast_precision_loss)]
             for nz in 0..side {
-                vars[2] = black_box(nz as f64 * scale - 5.0);
+                vars[2] = black_box((nz as f64).mul_add(scale, -5.0));
                 for g in &multi.groups {
                     if g.level == 2 {
                         (g.combined)(&vars, cache);
@@ -354,7 +390,7 @@ fn bench_expression(
                 }
 
                 for ny in 0..side {
-                    vars[1] = black_box(ny as f64 * scale - 5.0);
+                    vars[1] = black_box((ny as f64).mul_add(scale, -5.0));
                     for g in &multi.groups {
                         if g.level == 1 {
                             (g.combined)(&vars, cache);
@@ -362,7 +398,7 @@ fn bench_expression(
                     }
 
                     for nx in 0..side {
-                        vars[0] = black_box(nx as f64 * scale - 5.0);
+                        vars[0] = black_box((nx as f64).mul_add(scale, -5.0));
                         sum += black_box((multi.main)(&vars, cache));
                     }
                 }
@@ -386,11 +422,11 @@ fn register_compile(c: &mut Criterion) {
     }
 }
 
-#[cfg_attr(not(feature = "slow-benches"), allow(dead_code))]
+#[cfg_attr(not(feature = "slow-benches"), expect(dead_code))]
 mod evalexpr_bench {
-    use super::*;
+    use super::{CASES, Criterion, D3, SLOW_BENCH_SIDE, black_box, parse, run_triple_loop};
     use evalexpr::{
-        ContextWithMutableVariables, DefaultNumericTypes, HashMapContext, Value,
+        ContextWithMutableVariables as _, DefaultNumericTypes, HashMapContext, Value,
         build_operator_tree,
     };
 
@@ -402,31 +438,41 @@ mod evalexpr_bench {
         direct_fn: fn(f64, f64, f64) -> f64,
     ) {
         let side = SLOW_BENCH_SIDE;
-        let scale = 10.0 / side as f64;
+        #[expect(clippy::cast_precision_loss)]
+        let scale = 10.0_f64 / side as f64;
 
         let mut node = parse(hx_expr, &D3).expect("parse failed");
         let (compiled, slots) = node.prepare(&[]);
-        let mut cache = vec![0.0; slots];
+        let mut cache = vec![0.0_f64; slots];
 
         let ee_node = build_operator_tree::<DefaultNumericTypes>(ee_expr).expect("evalexpr parse");
 
         {
-            let v = [1.5, 2.5, -3.0];
+            let v = [1.5_f64, 2.5_f64, -3.0_f64];
             let hx = compiled(&v, &mut cache);
 
             let mut ctx = HashMapContext::new();
-            ctx.set_value("x".into(), Value::from_float(v[0])).ok();
-            ctx.set_value("y".into(), Value::from_float(v[1])).ok();
-            ctx.set_value("z".into(), Value::from_float(v[2])).ok();
+            ctx.set_value("x".into(), Value::from_float(v[0]))
+                .expect("should not fail");
+            ctx.set_value("y".into(), Value::from_float(v[1]))
+                .expect("should not fail");
+            ctx.set_value("z".into(), Value::from_float(v[2]))
+                .expect("should not fail");
             let ee = ee_node
                 .eval_with_context(&ctx)
-                .unwrap()
+                .expect("eval should not fail")
                 .as_number()
-                .unwrap();
+                .expect("convertion should not fail");
 
             let expected = direct_fn(v[0], v[1], v[2]);
-            assert!((hx - expected).abs() < 1e-12, "HX sanity fail for {name}");
-            assert!((ee - expected).abs() < 1e-6, "EE sanity fail for {name}");
+            assert!(
+                (hx - expected).abs() < 1e-12_f64,
+                "HX sanity fail for {name}"
+            );
+            assert!(
+                (ee - expected).abs() < 1e-6_f64,
+                "EE sanity fail for {name}"
+            );
         }
 
         let mut group = c.benchmark_group(format!("vs_evalexpr/{name}"));
@@ -443,18 +489,24 @@ mod evalexpr_bench {
                 for nz in 0..side {
                     for ny in 0..side {
                         for nx in 0..side {
-                            let xv = black_box(nx as f64 * scale - 5.0);
-                            let yv = black_box(ny as f64 * scale - 5.0);
-                            let zv = black_box(nz as f64 * scale - 5.0);
-                            ctx.set_value("x".into(), Value::from_float(xv)).ok();
-                            ctx.set_value("y".into(), Value::from_float(yv)).ok();
-                            ctx.set_value("z".into(), Value::from_float(zv)).ok();
+                            #[expect(clippy::cast_precision_loss)]
+                            let xv = black_box((nx as f64).mul_add(scale, -5.0));
+                            #[expect(clippy::cast_precision_loss)]
+                            let yv = black_box((ny as f64).mul_add(scale, -5.0));
+                            #[expect(clippy::cast_precision_loss)]
+                            let zv = black_box((nz as f64).mul_add(scale, -5.0));
+                            ctx.set_value("x".into(), Value::from_float(xv))
+                                .expect("should not fail");
+                            ctx.set_value("y".into(), Value::from_float(yv))
+                                .expect("should not fail");
+                            ctx.set_value("z".into(), Value::from_float(zv))
+                                .expect("should not fail");
                             sum += black_box(
                                 ee_node
                                     .eval_with_context_mut(&mut ctx)
-                                    .unwrap()
+                                    .expect("eval should not fail")
                                     .as_number()
-                                    .unwrap(),
+                                    .expect("convertion should not fail"),
                             );
                         }
                     }
