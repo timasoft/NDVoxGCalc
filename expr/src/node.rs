@@ -55,6 +55,20 @@ pub struct CompiledExprMulti {
     pub cse_slots: usize,
 }
 
+#[cfg(feature = "fma")]
+#[expect(clippy::inline_always, clippy::missing_const_for_fn)]
+#[inline(always)]
+fn mul_add(a: f64, b: f64, c: f64) -> f64 {
+    f64::mul_add(a, b, c)
+}
+
+#[cfg(not(feature = "fma"))]
+#[expect(clippy::inline_always, clippy::suboptimal_flops)]
+#[inline(always)]
+fn mul_add(a: f64, b: f64, c: f64) -> f64 {
+    a * b + c
+}
+
 impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// Evaluate constant sub-expressions and apply algebraic simplifications at compile time.
     ///
@@ -647,7 +661,7 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
             #[expect(clippy::shadow_reuse)]
             Self::Add(a, b) => {
                 if let (Self::Mul(a, b), c) | (c, Self::Mul(b, a)) = (a.as_ref(), b.as_ref()) {
-                    a.compile_terop(b, c, f64::mul_add)
+                    a.compile_terop(b, c, mul_add)
                 } else {
                     a.compile_binop(b, |x, y| x + y)
                 }
@@ -655,9 +669,9 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
             #[expect(clippy::shadow_reuse)]
             Self::Sub(a, b) => {
                 if let (Self::Mul(a, b), c) = (a.as_ref(), b.as_ref()) {
-                    a.compile_terop(b, c, |x, y, z| x.mul_add(y, -z))
+                    a.compile_terop(b, c, |x, y, z| mul_add(x, y, -z))
                 } else if let (c, Self::Mul(b, a)) = (a.as_ref(), b.as_ref()) {
-                    a.compile_terop(b, c, |x, y, z| x.mul_add(-y, z))
+                    a.compile_terop(b, c, |x, y, z| mul_add(x, -y, z))
                 } else {
                     a.compile_binop(b, |x, y| x - y)
                 }

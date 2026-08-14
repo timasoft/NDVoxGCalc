@@ -109,6 +109,7 @@ Measurements from [`criterion`] benchmarks on GitHub Actions
 
 ## Cargo features
 
+- `fma` -- compiles the fused `a*b+c` (MulAdd/MulSub/NegMulAdd/NegMul) patterns to `f64::mul_add`. Only beneficial when the target also enables the `+fma` target feature (e.g. `-C target-feature=+fma` in `.cargo/config.toml` for native x86-64/ARM) (disabled by default).
 - `slow-benches` -- enables comparison with `evalexpr` in benchmarks (disabled by default)
 
 ## License

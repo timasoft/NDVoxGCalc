@@ -36,6 +36,8 @@ jobs:
       - uses: bencherdev/bencher@v0.6.11
 
       - name: Track PR Benchmarks with Bencher
+        env:
+          RUSTFLAGS: "-C target-feature=+fma"
         run: |
           bencher run \
           --project hypervox-expr \
@@ -50,4 +52,4 @@ jobs:
           --error-on-alert \
           --github-actions '${{ secrets.GITHUB_TOKEN }}' \
           nix develop . --command \
-            cargo bench -p hypervox_expr --features slow-benches
+            cargo bench -p hypervox_expr --features 'slow-benches fma'

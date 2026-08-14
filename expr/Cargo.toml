@@ -13,6 +13,7 @@ categories = ["mathematics", "parsing", "algorithms"]
 
 [features]
 slow-benches = []
+fma = []
 
 [dependencies]
 

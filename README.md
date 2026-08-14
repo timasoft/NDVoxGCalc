@@ -47,10 +47,13 @@ A `hypervox_expr` Pratt parser with constant folding, common-subexpression elimi
 cargo build --release   # native
 trunk serve             # WASM dev server on 0.0.0.0:8080
 nix build .#native      # native release via flake -> result/
+nix build .#native-fma  # native release with fused multiply-add (FMA) via flake -> result/
 nix build .#web         # WASM release via flake -> result/
 ```
 
 All builds (native and WASM) require nightly Rust: `.cargo/config.toml` sets `build-std = ["panic_abort", "std"]`. Use `nix develop` for the full toolchain.
+
+> Note: `--features fma` alone (e.g. `cargo build --features fma`) is **not** recommended - without the `+fma` target feature, `f64::mul_add` falls back to a software implementation that can be *slower* than plain `a*b+c`.
 
 ## License
 
