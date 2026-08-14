@@ -9,21 +9,22 @@ pub type CompiledExpr = Box<dyn Fn(&[f64], &mut [f64]) -> f64 + Send + Sync>;
 pub enum Node<EF1: ExtF1 = NoExtF, EF2: ExtF2 = NoExtF> {
     Num(f64),
     Var(usize),
-    Neg(Box<Node<EF1, EF2>>),
-    Add(Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
-    Sub(Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
-    Mul(Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
-    Div(Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
-    Pow(Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
-    Mod(Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
-    F1(F1, Box<Node<EF1, EF2>>),
-    F2(F2, Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
+    Neg(Box<Self>),
+    Add(Box<Self>, Box<Self>),
+    Sub(Box<Self>, Box<Self>),
+    Mul(Box<Self>, Box<Self>),
+    Div(Box<Self>, Box<Self>),
+    Pow(Box<Self>, Box<Self>),
+    Mod(Box<Self>, Box<Self>),
+    F1(F1, Box<Self>),
+    F2(F2, Box<Self>, Box<Self>),
     /// External single-argument function call.
-    ExtF1(EF1, Box<Node<EF1, EF2>>),
+    ExtF1(EF1, Box<Self>),
     /// External two-argument function call.
-    ExtF2(EF2, Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
+    ExtF2(EF2, Box<Self>, Box<Self>),
+    #[expect(clippy::doc_markdown)]
     /// let slot_i = expr in body
-    Let(usize, Box<Node<EF1, EF2>>, Box<Node<EF1, EF2>>),
+    Let(usize, Box<Self>, Box<Self>),
     /// reference to cached CSE slot
     CseRef(usize, IndexSet),
 }
@@ -54,6 +55,20 @@ pub struct CompiledExprMulti {
     pub cse_slots: usize,
 }
 
+#[cfg(feature = "fma")]
+#[expect(clippy::inline_always, clippy::missing_const_for_fn)]
+#[inline(always)]
+fn mul_add(a: f64, b: f64, c: f64) -> f64 {
+    f64::mul_add(a, b, c)
+}
+
+#[cfg(not(feature = "fma"))]
+#[expect(clippy::inline_always, clippy::suboptimal_flops)]
+#[inline(always)]
+fn mul_add(a: f64, b: f64, c: f64) -> f64 {
+    a * b + c
+}
+
 impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// Evaluate constant sub-expressions and apply algebraic simplifications at compile time.
     ///
@@ -70,87 +85,87 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// # Examples
     /// ```
     /// # use hypervox_expr::Node;
-    /// let mut node: Node = Node::Add(Box::new(Node::Num(2.0)), Box::new(Node::Num(3.0)));
+    /// let mut node: Node = Node::Add(Box::new(Node::Num(2.0_f64)), Box::new(Node::Num(3.0_f64)));
     /// node.pre_eval(&[]);
-    /// assert_eq!(node, Node::Num(5.0));
+    /// assert_eq!(node, Node::Num(5.0_f64));
     /// ```
     pub fn pre_eval(&mut self, vars: &[Option<f64>]) {
         match self {
-            Node::Num(_) => {}
-            Node::Var(i) => {
+            Self::Num(_) | Self::CseRef(_, _) => {}
+            Self::Var(i) => {
                 if let Some(Some(v)) = vars.get(*i) {
-                    *self = Node::Num(*v);
+                    *self = Self::Num(*v);
                 }
             }
-            Node::Neg(a) => {
+            Self::Neg(a) => {
                 a.pre_eval(vars);
-                if let Node::Num(x) = a.as_ref() {
-                    *self = Node::Num(-*x);
-                } else if let Node::Neg(inner) = a.as_ref() {
+                if let Self::Num(x) = a.as_ref() {
+                    *self = Self::Num(-*x);
+                } else if let Self::Neg(inner) = a.as_ref() {
                     // -(-x) => x
                     *self = *inner.clone();
                 }
             }
-            Node::Add(a, b) => {
+            Self::Add(a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
                 match (a.as_ref(), b.as_ref()) {
-                    (Node::Num(x), Node::Num(y)) => *self = Node::Num(x + y),
-                    (Node::Num(x), _) if *x == 0.0 => *self = *b.clone(),
-                    (_, Node::Num(y)) if *y == 0.0 => *self = *a.clone(),
-                    (Node::Neg(a_inner), Node::Neg(b_inner)) => {
+                    (Self::Num(x), Self::Num(y)) => *self = Self::Num(x + y),
+                    (Self::Num(x), _) if *x == 0.0_f64 => *self = *b.clone(),
+                    (_, Self::Num(y)) if *y == 0.0_f64 => *self = *a.clone(),
+                    (Self::Neg(a_inner), Self::Neg(b_inner)) => {
                         // (-a) + (-b) = -(a + b)
                         let mut new =
-                            Node::Neg(Box::new(Node::Add(a_inner.clone(), b_inner.clone())));
+                            Self::Neg(Box::new(Self::Add(a_inner.clone(), b_inner.clone())));
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (Node::Neg(a_inner), _) if *a_inner == *b => {
+                    (Self::Neg(a_inner), _) if *a_inner == *b => {
                         // (-a) + a = 0
-                        *self = Node::Num(0.0);
+                        *self = Self::Num(0.0_f64);
                     }
-                    (_, Node::Neg(b_inner)) if *a == *b_inner => {
+                    (_, Self::Neg(b_inner)) if *a == *b_inner => {
                         // a + (-a) = 0
-                        *self = Node::Num(0.0);
+                        *self = Self::Num(0.0_f64);
                     }
-                    (Node::Neg(a_inner), _) => {
+                    (Self::Neg(a_inner), _) => {
                         // (-a) + b = b - a
-                        let mut new = Node::Sub(b.clone(), a_inner.clone());
+                        let mut new = Self::Sub(b.clone(), a_inner.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (_, Node::Neg(b_inner)) => {
+                    (_, Self::Neg(b_inner)) => {
                         // a + (-b) = a - b
-                        let mut new = Node::Sub(a.clone(), b_inner.clone());
+                        let mut new = Self::Sub(a.clone(), b_inner.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
                     _ if *a == *b => {
                         // a + a => 2*a
-                        let mut new = Node::Mul(Box::new(Node::Num(2.0)), a.clone());
+                        let mut new = Self::Mul(Box::new(Self::Num(2.0_f64)), a.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
                     // reassociate: (x + c1) + c2 / (c1 + x) + c2 => x + (c1 + c2)
-                    (Node::Add(left, right), Node::Num(c2)) => {
-                        if let Node::Num(c1) = right.as_ref() {
-                            let mut new = Node::Add(left.clone(), Box::new(Node::Num(*c1 + *c2)));
+                    (Self::Add(left, right), Self::Num(c2)) => {
+                        if let Self::Num(c1) = right.as_ref() {
+                            let mut new = Self::Add(left.clone(), Box::new(Self::Num(*c1 + *c2)));
                             new.pre_eval(vars);
                             *self = new;
-                        } else if let Node::Num(c1) = left.as_ref() {
-                            let mut new = Node::Add(right.clone(), Box::new(Node::Num(*c1 + *c2)));
+                        } else if let Self::Num(c1) = left.as_ref() {
+                            let mut new = Self::Add(right.clone(), Box::new(Self::Num(*c1 + *c2)));
                             new.pre_eval(vars);
                             *self = new;
                         }
                     }
                     // reassociate: c1 + (x + c2) / c1 + (c2 + x) => x + (c1 + c2)
-                    (Node::Num(c1), Node::Add(left, right)) => {
-                        if let Node::Num(c2) = right.as_ref() {
-                            let mut new = Node::Add(left.clone(), Box::new(Node::Num(*c1 + *c2)));
+                    (Self::Num(c1), Self::Add(left, right)) => {
+                        if let Self::Num(c2) = right.as_ref() {
+                            let mut new = Self::Add(left.clone(), Box::new(Self::Num(*c1 + *c2)));
                             new.pre_eval(vars);
                             *self = new;
-                        } else if let Node::Num(c2) = left.as_ref() {
-                            let mut new = Node::Add(right.clone(), Box::new(Node::Num(*c1 + *c2)));
+                        } else if let Self::Num(c2) = left.as_ref() {
+                            let mut new = Self::Add(right.clone(), Box::new(Self::Num(*c1 + *c2)));
                             new.pre_eval(vars);
                             *self = new;
                         }
@@ -158,81 +173,81 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
                     _ => {}
                 }
             }
-            Node::Sub(a, b) => {
+            Self::Sub(a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
-                if let (Node::Num(x), Node::Num(y)) = (a.as_ref(), b.as_ref()) {
-                    *self = Node::Num(x - y);
-                } else if let Node::Neg(b_inner) = b.as_ref() {
+                if let (Self::Num(x), Self::Num(y)) = (a.as_ref(), b.as_ref()) {
+                    *self = Self::Num(x - y);
+                } else if let Self::Neg(b_inner) = b.as_ref() {
                     // a - (-b) => a + b
-                    let mut new = Node::Add(a.clone(), b_inner.clone());
+                    let mut new = Self::Add(a.clone(), b_inner.clone());
                     new.pre_eval(vars);
                     *self = new;
                 } else if *a == *b {
                     // x - x => 0
-                    *self = Node::Num(0.0);
-                } else if let Node::Neg(a_inner) = a.as_ref() {
+                    *self = Self::Num(0.0_f64);
+                } else if let Self::Neg(a_inner) = a.as_ref() {
                     // (-a) - b = -(a + b)
-                    let mut new = Node::Neg(Box::new(Node::Add(a_inner.clone(), b.clone())));
+                    let mut new = Self::Neg(Box::new(Self::Add(a_inner.clone(), b.clone())));
                     new.pre_eval(vars);
                     *self = new;
-                } else if let Node::Num(y) = b.as_ref()
-                    && *y == 0.0
+                } else if let Self::Num(y) = b.as_ref()
+                    && *y == 0.0_f64
                 {
                     *self = *a.clone();
-                } else if let Node::Num(x) = a.as_ref()
-                    && *x == 0.0
+                } else if let Self::Num(x) = a.as_ref()
+                    && *x == 0.0_f64
                 {
-                    let mut new = Node::Neg(b.clone());
+                    let mut new = Self::Neg(b.clone());
                     new.pre_eval(vars);
                     *self = new;
                 }
             }
-            Node::Mul(a, b) => {
+            Self::Mul(a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
                 match (a.as_ref(), b.as_ref()) {
-                    (Node::Num(x), Node::Num(y)) => *self = Node::Num(x * y),
-                    (Node::Num(x), _) if *x == 0.0 => *self = Node::Num(0.0),
-                    (_, Node::Num(y)) if *y == 0.0 => *self = Node::Num(0.0),
-                    (Node::Num(x), _) if *x == 1.0 => *self = *b.clone(),
-                    (_, Node::Num(y)) if *y == 1.0 => *self = *a.clone(),
-                    (Node::Num(x), _) if *x == -1.0 => {
-                        let mut new = Node::Neg(b.clone());
+                    (Self::Num(x), Self::Num(y)) => *self = Self::Num(x * y),
+                    (Self::Num(x), _) if *x == 0.0_f64 => *self = Self::Num(0.0_f64),
+                    (_, Self::Num(y)) if *y == 0.0_f64 => *self = Self::Num(0.0_f64),
+                    (Self::Num(x), _) if *x == 1.0_f64 => *self = *b.clone(),
+                    (_, Self::Num(y)) if *y == 1.0_f64 => *self = *a.clone(),
+                    (Self::Num(x), _) if *x == -1.0_f64 => {
+                        let mut new = Self::Neg(b.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (_, Node::Num(y)) if *y == -1.0 => {
-                        let mut new = Node::Neg(a.clone());
+                    (_, Self::Num(y)) if *y == -1.0_f64 => {
+                        let mut new = Self::Neg(a.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (Node::Neg(a_inner), Node::Neg(b_inner)) => {
+                    (Self::Neg(a_inner), Self::Neg(b_inner)) => {
                         // (-a) * (-b) = a * b
-                        let mut new = Node::Mul(a_inner.clone(), b_inner.clone());
+                        let mut new = Self::Mul(a_inner.clone(), b_inner.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
                     // reassociate: (x * c1) * c2 / (c1 * x) * c2 => x * (c1 * c2)
-                    (Node::Mul(left, right), Node::Num(c2)) => {
-                        if let Node::Num(c1) = right.as_ref() {
-                            let mut new = Node::Mul(left.clone(), Box::new(Node::Num(*c1 * *c2)));
+                    (Self::Mul(left, right), Self::Num(c2)) => {
+                        if let Self::Num(c1) = right.as_ref() {
+                            let mut new = Self::Mul(left.clone(), Box::new(Self::Num(*c1 * *c2)));
                             new.pre_eval(vars);
                             *self = new;
-                        } else if let Node::Num(c1) = left.as_ref() {
-                            let mut new = Node::Mul(right.clone(), Box::new(Node::Num(*c1 * *c2)));
+                        } else if let Self::Num(c1) = left.as_ref() {
+                            let mut new = Self::Mul(right.clone(), Box::new(Self::Num(*c1 * *c2)));
                             new.pre_eval(vars);
                             *self = new;
                         }
                     }
                     // reassociate: c1 * (x * c2) / c1 * (c2 * x) => x * (c1 * c2)
-                    (Node::Num(c1), Node::Mul(left, right)) => {
-                        if let Node::Num(c2) = right.as_ref() {
-                            let mut new = Node::Mul(left.clone(), Box::new(Node::Num(*c1 * *c2)));
+                    (Self::Num(c1), Self::Mul(left, right)) => {
+                        if let Self::Num(c2) = right.as_ref() {
+                            let mut new = Self::Mul(left.clone(), Box::new(Self::Num(*c1 * *c2)));
                             new.pre_eval(vars);
                             *self = new;
-                        } else if let Node::Num(c2) = left.as_ref() {
-                            let mut new = Node::Mul(right.clone(), Box::new(Node::Num(*c1 * *c2)));
+                        } else if let Self::Num(c2) = left.as_ref() {
+                            let mut new = Self::Mul(right.clone(), Box::new(Self::Num(*c1 * *c2)));
                             new.pre_eval(vars);
                             *self = new;
                         }
@@ -240,120 +255,120 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
                     _ => {}
                 }
             }
-            Node::Div(a, b) => {
+            Self::Div(a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
                 match (a.as_ref(), b.as_ref()) {
                     _ if *a == *b => {
                         // x / x => 1
-                        *self = Node::Num(1.0);
+                        *self = Self::Num(1.0_f64);
                     }
-                    (Node::Num(x), Node::Num(y)) => *self = Node::Num(x / y),
-                    (_, Node::Num(y)) if *y == 1.0 => *self = *a.clone(),
-                    (Node::Num(x), _) if *x == 0.0 => *self = Node::Num(0.0),
-                    (_, Node::Num(y)) if *y == -1.0 => {
-                        let mut new = Node::Neg(a.clone());
+                    (Self::Num(x), Self::Num(y)) => *self = Self::Num(x / y),
+                    (_, Self::Num(y)) if *y == 1.0_f64 => *self = *a.clone(),
+                    (Self::Num(x), _) if *x == 0.0_f64 => *self = Self::Num(0.0_f64),
+                    (_, Self::Num(y)) if *y == -1.0_f64 => {
+                        let mut new = Self::Neg(a.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (_, Node::Num(y)) => {
+                    (_, Self::Num(y)) => {
                         // x / c => x * (1/c)
-                        let mut new = Node::Mul(a.clone(), Box::new(Node::Num(1.0 / *y)));
+                        let mut new = Self::Mul(a.clone(), Box::new(Self::Num(1.0_f64 / *y)));
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (Node::Neg(a_inner), Node::Neg(b_inner)) => {
+                    (Self::Neg(a_inner), Self::Neg(b_inner)) => {
                         // (-a) / (-b) = a / b
-                        let mut new = Node::Div(a_inner.clone(), b_inner.clone());
+                        let mut new = Self::Div(a_inner.clone(), b_inner.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (_, Node::Neg(b_inner)) => {
+                    (_, Self::Neg(b_inner)) => {
                         // a / (-b) = -(a / b)
-                        let mut new = Node::Neg(Box::new(Node::Div(a.clone(), b_inner.clone())));
+                        let mut new = Self::Neg(Box::new(Self::Div(a.clone(), b_inner.clone())));
                         new.pre_eval(vars);
                         *self = new;
                     }
                     _ => {}
                 }
             }
-            Node::Pow(a, b) => {
+            Self::Pow(a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
                 match (a.as_ref(), b.as_ref()) {
-                    (Node::Num(x), Node::Num(y)) => {
-                        *self = Node::Num(if *x == 0.0 && *y == 0.0 {
-                            1.0
+                    (Self::Num(x), Self::Num(y)) => {
+                        *self = Self::Num(if *x == 0.0_f64 && *y == 0.0_f64 {
+                            1.0_f64
                         } else {
                             x.powf(*y)
                         });
                     }
-                    (_, Node::Num(y)) if *y == 0.0 => *self = Node::Num(1.0),
-                    (_, Node::Num(y)) if *y == 1.0 => *self = *a.clone(),
-                    (Node::Num(x), _) if *x == 1.0 => *self = Node::Num(1.0),
-                    (Node::Neg(a_inner), Node::Num(y))
-                        if *y == (*y as i32) as f64 && (*y as i32) % 2 == 0 =>
+                    (_, Self::Num(y)) if *y == 0.0_f64 => *self = Self::Num(1.0_f64),
+                    (_, Self::Num(y)) if *y == 1.0_f64 => *self = *a.clone(),
+                    (Self::Num(x), _) if *x == 1.0_f64 => *self = Self::Num(1.0_f64),
+                    (Self::Neg(a_inner), Self::Num(y))
+                        if *y == f64::from(*y as i32) && (*y as i32) % 2_i32 == 0_i32 =>
                     {
                         // (-x)^n => x^n  for even integer n
-                        let mut new = Node::Pow(a_inner.clone(), b.clone());
+                        let mut new = Self::Pow(a_inner.clone(), b.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (Node::Var(_), Node::Num(y)) if *y == 2.0 => {
-                        let mut new_node = Node::Mul(a.clone(), a.clone());
+                    (Self::Var(_), Self::Num(y)) if *y == 2.0_f64 => {
+                        let mut new_node = Self::Mul(a.clone(), a.clone());
                         new_node.pre_eval(vars);
                         *self = new_node;
                     }
                     _ => {}
                 }
             }
-            Node::Mod(a, b) => {
+            Self::Mod(a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
                 match (a.as_ref(), b.as_ref()) {
-                    (Node::Num(x), Node::Num(y)) => *self = Node::Num(x % y),
+                    (Self::Num(x), Self::Num(y)) => *self = Self::Num(x % y),
                     _ if *a == *b => {
                         // x % x => 0
-                        *self = Node::Num(0.0);
+                        *self = Self::Num(0.0_f64);
                     }
-                    (Node::Num(x), _) if *x == 0.0 => {
+                    (Self::Num(x), _) if *x == 0.0_f64 => {
                         // 0 % x => 0
-                        *self = Node::Num(0.0);
+                        *self = Self::Num(0.0_f64);
                     }
-                    (Node::Neg(a_inner), Node::Neg(b_inner)) => {
+                    (Self::Neg(a_inner), Self::Neg(b_inner)) => {
                         // (-a) % (-b) = -(a % b)
                         let mut new =
-                            Node::Neg(Box::new(Node::Mod(a_inner.clone(), b_inner.clone())));
+                            Self::Neg(Box::new(Self::Mod(a_inner.clone(), b_inner.clone())));
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (_, Node::Neg(b_inner)) => {
+                    (_, Self::Neg(b_inner)) => {
                         // a % (-b) = a % b  (sign of divisor doesn't affect result)
-                        let mut new = Node::Mod(a.clone(), b_inner.clone());
+                        let mut new = Self::Mod(a.clone(), b_inner.clone());
                         new.pre_eval(vars);
                         *self = new;
                     }
-                    (Node::Neg(a_inner), _) => {
+                    (Self::Neg(a_inner), _) => {
                         // (-a) % b = -(a % b)
-                        let mut new = Node::Neg(Box::new(Node::Mod(a_inner.clone(), b.clone())));
+                        let mut new = Self::Neg(Box::new(Self::Mod(a_inner.clone(), b.clone())));
                         new.pre_eval(vars);
                         *self = new;
                     }
                     _ => {}
                 }
             }
-            Node::F1(f, a) => {
+            Self::F1(f, a) => {
                 a.pre_eval(vars);
-                if let Node::Num(x) = a.as_ref() {
-                    *self = Node::Num(f.to_fn()(*x));
-                } else if let Node::F1(g, inner) = a.as_ref() {
+                if let Self::Num(x) = a.as_ref() {
+                    *self = Self::Num(f.to_fn()(*x));
+                } else if let Self::F1(g, inner) = a.as_ref() {
                     match (f, g) {
                         // inverse compositions: f(g(x)) = x
-                        (F1::Ln, F1::Exp) => *self = *inner.clone(),
-                        (F1::Exp, F1::Ln) => *self = *inner.clone(),
-                        (F1::Sin, F1::Asin) => *self = *inner.clone(),
-                        (F1::Cos, F1::Acos) => *self = *inner.clone(),
-                        (F1::Tan, F1::Atan) => *self = *inner.clone(),
+                        (F1::Ln, F1::Exp)
+                        | (F1::Exp, F1::Ln)
+                        | (F1::Sin, F1::Asin)
+                        | (F1::Cos, F1::Acos)
+                        | (F1::Tan, F1::Atan) => *self = *inner.clone(),
                         // idempotent: f(f(x)) = f(x)
                         (F1::Abs, F1::Abs)
                         | (F1::Floor, F1::Floor)
@@ -364,31 +379,30 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
                     }
                 }
             }
-            Node::F2(f, a, b) => {
+            Self::F2(f, a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
-                if let (Node::Num(x), Node::Num(y)) = (a.as_ref(), b.as_ref()) {
-                    *self = Node::Num(f.to_fn()(*x, *y));
+                if let (Self::Num(x), Self::Num(y)) = (a.as_ref(), b.as_ref()) {
+                    *self = Self::Num(f.to_fn()(*x, *y));
                 }
             }
-            Node::ExtF1(f, a) => {
+            Self::ExtF1(f, a) => {
                 a.pre_eval(vars);
-                if let Node::Num(x) = a.as_ref() {
-                    *self = Node::Num(f.to_fn()(*x));
+                if let Self::Num(x) = a.as_ref() {
+                    *self = Self::Num(f.to_fn()(*x));
                 }
             }
-            Node::ExtF2(f, a, b) => {
+            Self::ExtF2(f, a, b) => {
                 a.pre_eval(vars);
                 b.pre_eval(vars);
-                if let (Node::Num(x), Node::Num(y)) = (a.as_ref(), b.as_ref()) {
-                    *self = Node::Num(f.to_fn()(*x, *y));
+                if let (Self::Num(x), Self::Num(y)) = (a.as_ref(), b.as_ref()) {
+                    *self = Self::Num(f.to_fn()(*x, *y));
                 }
             }
-            Node::Let(_slot, expr, body) => {
+            Self::Let(_slot, expr, body) => {
                 expr.pre_eval(vars);
                 body.pre_eval(vars);
             }
-            Node::CseRef(_, _) => {}
         }
     }
 
@@ -397,26 +411,26 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// # Examples
     /// ```
     /// # use hypervox_expr::Node;
-    /// let node: Node = Node::Let(0, Box::new(Node::Num(1.0)), Box::new(Node::Var(0)));
+    /// let node: Node = Node::Let(0, Box::new(Node::Num(1.0_f64)), Box::new(Node::Var(0)));
     /// assert_eq!(node.cse_slots(), 1);
     /// ```
     pub fn cse_slots(&self) -> usize {
         match self {
-            Node::Let(slot, expr, body) => {
-                let slot = *slot + 1;
-                slot.max(expr.cse_slots()).max(body.cse_slots())
-            }
-            Node::CseRef(slot, _) => *slot + 1,
-            Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => a.cse_slots(),
-            Node::Add(a, b)
-            | Node::Sub(a, b)
-            | Node::Mul(a, b)
-            | Node::Div(a, b)
-            | Node::Pow(a, b)
-            | Node::Mod(a, b)
-            | Node::F2(_, a, b)
-            | Node::ExtF2(_, a, b) => a.cse_slots().max(b.cse_slots()),
-            Node::Num(_) | Node::Var(_) => 0,
+            Self::Let(slot, expr, body) => slot
+                .saturating_add(1)
+                .max(expr.cse_slots())
+                .max(body.cse_slots()),
+            Self::CseRef(slot, _) => slot.saturating_add(1),
+            Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => a.cse_slots(),
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Div(a, b)
+            | Self::Pow(a, b)
+            | Self::Mod(a, b)
+            | Self::F2(_, a, b)
+            | Self::ExtF2(_, a, b) => a.cse_slots().max(b.cse_slots()),
+            Self::Num(_) | Self::Var(_) => 0,
         }
     }
 
@@ -428,24 +442,24 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// ```
     /// # use hypervox_expr::Node;
     /// let mut node: Node = Node::Mul(
-    ///     Box::new(Node::Add(Box::new(Node::Var(0)), Box::new(Node::Num(1.0)))),
-    ///     Box::new(Node::Add(Box::new(Node::Var(0)), Box::new(Node::Num(1.0)))),
+    ///     Box::new(Node::Add(Box::new(Node::Var(0)), Box::new(Node::Num(1.0_f64)))),
+    ///     Box::new(Node::Add(Box::new(Node::Var(0)), Box::new(Node::Num(1.0_f64)))),
     /// );
     /// node.cse();
     /// assert!(node.cse_slots() > 0); // (x+1) extracted into a CSE slot
-    /// let mut cache = vec![0.0; node.cse_slots()];
+    /// let mut cache = vec![0.0_f64; node.cse_slots()];
     /// let f = node.compile();
-    /// assert_eq!(f(&[4.0], &mut cache), 25.0); // (4+1)^2
+    /// assert_eq!(f(&[4.0_f64], &mut cache), 25.0_f64); // (4+1)^2
     /// ```
     pub fn cse(&mut self) {
-        let mut slot = 0usize;
+        let mut slot = 0_usize;
         while self.cse_one_pass(slot) {
-            slot += 1;
+            slot = slot.wrapping_add(1);
         }
     }
 
-    /// Preparation pipeline: pre_eval, CSE, compile.
-    /// Returns (compiled_expr, cse_slots).
+    /// Preparation pipeline: `pre_eval`, `CSE`, `compile`.
+    /// Returns (`compiled_expr`, `cse_slots`).
     ///
     /// # Examples
     /// ```
@@ -458,8 +472,8 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// # }
     /// let mut node = parse("x*x + x*x", &V).unwrap();
     /// let (f, slots) = node.prepare(&[]);
-    /// let mut cache = vec![0.0; slots];
-    /// assert_eq!(f(&[3.0], &mut cache), 18.0);
+    /// let mut cache = vec![0.0_f64; slots];
+    /// assert_eq!(f(&[3.0_f64], &mut cache), 18.0_f64);
     /// ```
     pub fn prepare(&mut self, vars: &[Option<f64>]) -> (CompiledExpr, usize) {
         self.pre_eval(vars);
@@ -467,8 +481,8 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
         (self.compile(), self.cse_slots())
     }
 
-    /// Preparation pipeline: pre_eval, CSE, compile_multi.
-    /// Returns compiled_expr_multi.
+    /// Preparation pipeline: `pre_eval`, `CSE`, `compile_multi`.
+    /// Returns `compiled_expr_multi`.
     ///
     /// # Examples
     /// ```
@@ -481,11 +495,11 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// # }
     /// let mut node = parse("x*y + z", &V).unwrap();
     /// let multi = node.prepare_multi(&[], &[0, 1, 2]);
-    /// let mut cache = vec![0.0; multi.cse_slots];
+    /// let mut cache = vec![0.0_f64; multi.cse_slots];
     /// for g in &multi.groups {
-    ///     (g.combined)(&[1.0, 2.0, 3.0], &mut cache);
+    ///     (g.combined)(&[1.0_f64, 2.0_f64, 3.0_f64], &mut cache);
     /// }
-    /// assert_eq!((multi.main)(&[1.0, 2.0, 3.0], &mut cache), 5.0);
+    /// assert_eq!((multi.main)(&[1.0_f64, 2.0_f64, 3.0_f64], &mut cache), 5.0_f64);
     /// ```
     pub fn prepare_multi(
         &mut self,
@@ -499,15 +513,16 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
 
     /// Single-pass: find one repeated subtree, extract into Let.
     fn cse_one_pass(&mut self, slot: usize) -> bool {
-        let pattern = {
-            let mut nodes: Vec<&Node<EF1, EF2>> = Vec::new();
+        let pattern_option = {
+            let mut nodes: Vec<&Self> = Vec::new();
             self.cse_collect_extractable_candidates(&mut nodes);
 
-            let mut found = None::<Node<EF1, EF2>>;
-            'outer: for i in 0..nodes.len() {
-                for j in (i + 1)..nodes.len() {
-                    if *nodes[i] == *nodes[j] {
-                        found = Some(nodes[i].clone());
+            let mut found = None::<Self>;
+            'outer: for (i, a) in nodes.iter().enumerate() {
+                #[expect(clippy::indexing_slicing)]
+                for b in &nodes[i + 1..] {
+                    if a == b {
+                        found = Some((*a).clone());
                         break 'outer;
                     }
                 }
@@ -515,50 +530,45 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
             found
         };
 
-        if let Some(pattern) = pattern {
+        pattern_option.is_some_and(|pattern| {
             self.cse_replace_all(&pattern, slot);
 
-            let old_self = std::mem::replace(self, Node::Num(0.0));
-            *self = Node::Let(slot, Box::new(pattern), Box::new(old_self));
+            let old_self = std::mem::replace(self, Self::Num(0.0_f64));
+            *self = Self::Let(slot, Box::new(pattern), Box::new(old_self));
 
             true
-        } else {
-            false
-        }
+        })
     }
 
     /// Collects AST nodes that can be safely extracted into a CSE `Let` binding.
     ///
     /// Returns an `IndexSet` of unbound `CseRef` slots this node depends on.
-    fn cse_collect_extractable_candidates<'a>(
-        &'a self,
-        out: &mut Vec<&'a Node<EF1, EF2>>,
-    ) -> IndexSet {
+    fn cse_collect_extractable_candidates<'a>(&'a self, out: &mut Vec<&'a Self>) -> IndexSet {
         match self {
-            Node::CseRef(slot, _) => IndexSet::singleton(*slot),
-            Node::Let(slot, expr, body) => {
+            Self::CseRef(slot, _) => IndexSet::singleton(*slot),
+            Self::Let(slot, expr, body) => {
                 let sa = expr.cse_collect_extractable_candidates(out);
                 let sb = body.cse_collect_extractable_candidates(out);
                 let mut s = sa | sb;
                 s.insert(*slot, false);
                 s
             }
-            Node::Num(_) | Node::Var(_) => IndexSet::default(),
-            Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => {
+            Self::Num(_) | Self::Var(_) => IndexSet::default(),
+            Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => {
                 let s = a.cse_collect_extractable_candidates(out);
                 if s.is_empty() {
                     out.push(self);
                 }
                 s
             }
-            Node::Add(a, b)
-            | Node::Sub(a, b)
-            | Node::Mul(a, b)
-            | Node::Div(a, b)
-            | Node::Pow(a, b)
-            | Node::Mod(a, b)
-            | Node::F2(_, a, b)
-            | Node::ExtF2(_, a, b) => {
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Div(a, b)
+            | Self::Pow(a, b)
+            | Self::Mod(a, b)
+            | Self::F2(_, a, b)
+            | Self::ExtF2(_, a, b) => {
                 let sa = a.cse_collect_extractable_candidates(out);
                 let sb = b.cse_collect_extractable_candidates(out);
                 let s = sa | sb;
@@ -570,26 +580,26 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
         }
     }
 
-    fn cse_replace_all(&mut self, pattern: &Node<EF1, EF2>, slot: usize) {
+    fn cse_replace_all(&mut self, pattern: &Self, slot: usize) {
         if *self == *pattern {
-            *self = Node::CseRef(slot, pattern.depends_on());
+            *self = Self::CseRef(slot, pattern.depends_on());
             return;
         }
         match self {
-            Node::Num(_) | Node::Var(_) | Node::CseRef(_, _) => {}
-            Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => a.cse_replace_all(pattern, slot),
-            Node::Add(a, b)
-            | Node::Sub(a, b)
-            | Node::Mul(a, b)
-            | Node::Div(a, b)
-            | Node::Pow(a, b)
-            | Node::Mod(a, b)
-            | Node::F2(_, a, b)
-            | Node::ExtF2(_, a, b) => {
+            Self::Num(_) | Self::Var(_) | Self::CseRef(_, _) => {}
+            Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => a.cse_replace_all(pattern, slot),
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Div(a, b)
+            | Self::Pow(a, b)
+            | Self::Mod(a, b)
+            | Self::F2(_, a, b)
+            | Self::ExtF2(_, a, b) => {
                 a.cse_replace_all(pattern, slot);
                 b.cse_replace_all(pattern, slot);
             }
-            Node::Let(_, expr, body) => {
+            Self::Let(_, expr, body) => {
                 expr.cse_replace_all(pattern, slot);
                 body.cse_replace_all(pattern, slot);
             }
@@ -609,90 +619,92 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     /// ```
     pub fn depends_on(&self) -> IndexSet {
         match self {
-            Node::Num(_) => IndexSet::default(),
-            Node::Var(i) => IndexSet::singleton(*i),
-            Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => a.depends_on(),
-            Node::Add(a, b)
-            | Node::Sub(a, b)
-            | Node::Mul(a, b)
-            | Node::Div(a, b)
-            | Node::Pow(a, b)
-            | Node::Mod(a, b)
-            | Node::F2(_, a, b)
-            | Node::ExtF2(_, a, b) => a.depends_on() | b.depends_on(),
-            Node::Let(_, expr, body) => expr.depends_on() | body.depends_on(),
-            Node::CseRef(_, deps) => deps.clone(),
+            Self::Num(_) => IndexSet::default(),
+            Self::Var(i) => IndexSet::singleton(*i),
+            Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => a.depends_on(),
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Div(a, b)
+            | Self::Pow(a, b)
+            | Self::Mod(a, b)
+            | Self::F2(_, a, b)
+            | Self::ExtF2(_, a, b) => a.depends_on() | b.depends_on(),
+            Self::Let(_, expr, body) => expr.depends_on() | body.depends_on(),
+            Self::CseRef(_, deps) => deps.clone(),
         }
     }
 
     /// Compile the AST into a closure for repeated evaluation.
     ///
-    /// Leaf nodes (Var, Num, CseRef) are inlined directly into the parent closure
+    /// Leaf nodes (`Var`, `Num`, `CseRef`) are inlined directly into the parent closure
     /// body, eliminating sub-closure vtbl dispatch for the most common case.
     ///
     /// # Examples
     /// ```
     /// # use hypervox_expr::Node;
-    /// let node: Node = Node::Add(Box::new(Node::Num(3.0)), Box::new(Node::Num(4.0)));
+    /// let node: Node = Node::Add(Box::new(Node::Num(3.0_f64)), Box::new(Node::Num(4.0_f64)));
     /// let f = node.compile();
-    /// assert_eq!(f(&[], &mut []), 7.0);
+    /// assert_eq!(f(&[], &mut []), 7.0_f64);
     /// ```
     pub fn compile(&self) -> CompiledExpr {
         match self {
-            Node::Num(v) => {
+            Self::Num(v) => {
                 let v = *v;
                 Box::new(move |_, _| v)
             }
-            Node::Var(i) => {
+            Self::Var(i) => {
                 let i = *i;
-                Box::new(move |vars: &[f64], _| vars[i])
+                Box::new(move |vars: &[f64], _| *vars.get(i).unwrap_or(&0.0_f64))
             }
-            Node::Neg(a) => a.compile_unop(|x| -x),
-            Node::Add(a, b) => {
-                if let (Node::Mul(a, b), c) | (c, Node::Mul(b, a)) = (a.as_ref(), b.as_ref()) {
-                    a.compile_terop(b, c, |x, y, z| x.mul_add(y, z))
+            Self::Neg(a) => a.compile_unop(|x| -x),
+            #[expect(clippy::shadow_reuse)]
+            Self::Add(a, b) => {
+                if let (Self::Mul(a, b), c) | (c, Self::Mul(b, a)) = (a.as_ref(), b.as_ref()) {
+                    a.compile_terop(b, c, mul_add)
                 } else {
                     a.compile_binop(b, |x, y| x + y)
                 }
             }
-            Node::Sub(a, b) => {
-                if let (Node::Mul(a, b), c) = (a.as_ref(), b.as_ref()) {
-                    a.compile_terop(b, c, |x, y, z| x.mul_add(y, -z))
-                } else if let (c, Node::Mul(b, a)) = (a.as_ref(), b.as_ref()) {
-                    a.compile_terop(b, c, |x, y, z| x.mul_add(-y, z))
+            #[expect(clippy::shadow_reuse)]
+            Self::Sub(a, b) => {
+                if let (Self::Mul(a, b), c) = (a.as_ref(), b.as_ref()) {
+                    a.compile_terop(b, c, |x, y, z| mul_add(x, y, -z))
+                } else if let (c, Self::Mul(b, a)) = (a.as_ref(), b.as_ref()) {
+                    a.compile_terop(b, c, |x, y, z| mul_add(x, -y, z))
                 } else {
                     a.compile_binop(b, |x, y| x - y)
                 }
             }
-            Node::Mul(a, b) => a.compile_binop(b, |x, y| x * y),
-            Node::Div(a, b) => a.compile_binop(b, |x, y| x / y),
-            Node::Mod(a, b) => a.compile_binop(b, |x, y| x % y),
-            Node::Pow(a, b) => a.compile_binop(b, |base, exp| {
+            Self::Mul(a, b) => a.compile_binop(b, |x, y| x * y),
+            Self::Div(a, b) => a.compile_binop(b, |x, y| x / y),
+            Self::Mod(a, b) => a.compile_binop(b, |x, y| x % y),
+            Self::Pow(a, b) => a.compile_binop(b, |base, exp| {
                 let exp_int = exp as i32;
-                if base == 0.0 && exp == 0.0 {
-                    1.0
-                } else if (exp_int as f64) == exp {
+                if base == 0.0_f64 && exp == 0.0_f64 {
+                    1.0_f64
+                } else if f64::from(exp_int) == exp {
                     base.powi(exp_int)
                 } else {
                     base.powf(exp)
                 }
             }),
-            Node::F1(f, a) => a.compile_unop(f.to_fn()),
-            Node::F2(f, a, b) => a.compile_binop(b, f.to_fn()),
-            Node::ExtF1(f, a) => a.compile_unop(f.to_fn()),
-            Node::ExtF2(f, a, b) => a.compile_binop(b, f.to_fn()),
-            Node::Let(slot, expr, body) => {
+            Self::F1(f, a) => a.compile_unop(f.to_fn()),
+            Self::F2(f, a, b) => a.compile_binop(b, f.to_fn()),
+            Self::ExtF1(f, a) => a.compile_unop(f.to_fn()),
+            Self::ExtF2(f, a, b) => a.compile_binop(b, f.to_fn()),
+            Self::Let(slot, expr, body) => {
                 let slot = *slot;
                 let expr_fn = expr.compile();
                 let body_fn = body.compile();
                 Box::new(move |vars: &[f64], cse: &mut [f64]| {
-                    cse[slot] = expr_fn(vars, cse);
+                    *cse.get_mut(slot).unwrap_or(&mut 0.0_f64) = expr_fn(vars, cse);
                     body_fn(vars, cse)
                 })
             }
-            Node::CseRef(slot, _) => {
+            Self::CseRef(slot, _) => {
                 let slot = *slot;
-                Box::new(move |_: &[f64], cse: &mut [f64]| cse[slot])
+                Box::new(move |_: &[f64], cse: &mut [f64]| *cse.get(slot).unwrap_or(&0.0_f64))
             }
         }
     }
@@ -706,7 +718,7 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
         invariant_mask: &IndexSet,
         slot: &mut usize,
     ) -> Option<CompiledExpr> {
-        let mut pieces: Vec<(usize, Node<EF1, EF2>)> = Vec::new();
+        let mut pieces: Vec<(usize, Self)> = Vec::new();
 
         self.collect_invariants(invariant_mask, slot, &mut pieces);
 
@@ -714,9 +726,9 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
             return None;
         }
 
-        let mut chain = Node::Num(0.0);
+        let mut chain = Self::Num(0.0_f64);
         for (slot, node) in pieces.into_iter().rev() {
-            chain = Node::Let(slot, Box::new(node), Box::new(chain));
+            chain = Self::Let(slot, Box::new(node), Box::new(chain));
         }
 
         Some(chain.compile())
@@ -726,36 +738,36 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
         &mut self,
         invariant_mask: &IndexSet,
         slot: &mut usize,
-        pieces: &mut Vec<(usize, Node<EF1, EF2>)>,
+        pieces: &mut Vec<(usize, Self)>,
     ) {
         let deps = self.depends_on();
         if deps.is_disjoint(invariant_mask)
-            && !matches!(self, Node::Num(_) | Node::Var(_) | Node::CseRef(_, _))
+            && !matches!(self, Self::Num(_) | Self::Var(_) | Self::CseRef(_, _))
         {
-            let node = std::mem::replace(self, Node::CseRef(*slot, deps));
+            let node = std::mem::replace(self, Self::CseRef(*slot, deps));
             pieces.push((*slot, node));
-            *slot += 1;
+            *slot = slot.wrapping_add(1);
         } else {
             match self {
-                Node::Num(_) | Node::Var(_) | Node::CseRef(_, _) => {}
-                Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => {
-                    a.collect_invariants(invariant_mask, slot, pieces)
+                Self::Num(_) | Self::Var(_) | Self::CseRef(_, _) => {}
+                Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => {
+                    a.collect_invariants(invariant_mask, slot, pieces);
                 }
-                Node::Add(a, b)
-                | Node::Sub(a, b)
-                | Node::Mul(a, b)
-                | Node::Div(a, b)
-                | Node::Pow(a, b)
-                | Node::Mod(a, b)
-                | Node::F2(_, a, b)
-                | Node::ExtF2(_, a, b) => {
+                Self::Add(a, b)
+                | Self::Sub(a, b)
+                | Self::Mul(a, b)
+                | Self::Div(a, b)
+                | Self::Pow(a, b)
+                | Self::Mod(a, b)
+                | Self::F2(_, a, b)
+                | Self::ExtF2(_, a, b) => {
                     a.collect_invariants(invariant_mask, slot, pieces);
                     b.collect_invariants(invariant_mask, slot, pieces);
                 }
-                Node::Let(ls, expr, body) => {
+                Self::Let(ls, expr, body) => {
                     expr.collect_invariants(invariant_mask, slot, pieces);
 
-                    let alias = if let Node::CseRef(rs, deps) = expr.as_ref()
+                    let alias = if let Self::CseRef(rs, deps) = expr.as_ref()
                         && deps.is_disjoint(invariant_mask)
                         && *rs != *ls
                     {
@@ -765,7 +777,7 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
                     };
 
                     if let Some((ls, rs)) = alias {
-                        let mut folded = std::mem::replace(body.as_mut(), Node::Num(0.0));
+                        let mut folded = std::mem::replace(body.as_mut(), Self::Num(0.0_f64));
                         folded.remap_cse_slot(ls, rs);
                         *self = folded;
                         self.collect_invariants(invariant_mask, slot, pieces);
@@ -779,13 +791,13 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     }
 
     fn fold_cse_aliases(&mut self) {
-        if let Node::Let(slot, expr, _) = self
-            && let Node::CseRef(other, _) = expr.as_ref()
+        if let Self::Let(slot, expr, _) = self
+            && let Self::CseRef(other, _) = expr.as_ref()
             && *slot != *other
         {
             let old_slot = *slot;
             let new_slot = *other;
-            if let Node::Let(_, _, body) = std::mem::replace(self, Node::Num(0.0)) {
+            if let Self::Let(_, _, body) = std::mem::replace(self, Self::Num(0.0_f64)) {
                 let mut mapped = *body;
                 mapped.remap_cse_slot(old_slot, new_slot);
                 mapped.fold_cse_aliases();
@@ -793,20 +805,20 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
             }
         } else {
             match self {
-                Node::Num(_) | Node::Var(_) | Node::CseRef(_, _) => {}
-                Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => a.fold_cse_aliases(),
-                Node::Add(a, b)
-                | Node::Sub(a, b)
-                | Node::Mul(a, b)
-                | Node::Div(a, b)
-                | Node::Pow(a, b)
-                | Node::Mod(a, b)
-                | Node::F2(_, a, b)
-                | Node::ExtF2(_, a, b) => {
+                Self::Num(_) | Self::Var(_) | Self::CseRef(_, _) => {}
+                Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => a.fold_cse_aliases(),
+                Self::Add(a, b)
+                | Self::Sub(a, b)
+                | Self::Mul(a, b)
+                | Self::Div(a, b)
+                | Self::Pow(a, b)
+                | Self::Mod(a, b)
+                | Self::F2(_, a, b)
+                | Self::ExtF2(_, a, b) => {
                     a.fold_cse_aliases();
                     b.fold_cse_aliases();
                 }
-                Node::Let(_, expr, body) => {
+                Self::Let(_, expr, body) => {
                     expr.fold_cse_aliases();
                     body.fold_cse_aliases();
                 }
@@ -816,23 +828,23 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
 
     fn remap_cse_slot(&mut self, old_slot: usize, new_slot: usize) {
         match self {
-            Node::CseRef(slot, _) if *slot == old_slot => *slot = new_slot,
-            Node::Num(_) | Node::Var(_) | Node::CseRef(_, _) => {}
-            Node::Neg(a) | Node::F1(_, a) | Node::ExtF1(_, a) => {
-                a.remap_cse_slot(old_slot, new_slot)
+            Self::CseRef(slot, _) if *slot == old_slot => *slot = new_slot,
+            Self::Num(_) | Self::Var(_) | Self::CseRef(_, _) => {}
+            Self::Neg(a) | Self::F1(_, a) | Self::ExtF1(_, a) => {
+                a.remap_cse_slot(old_slot, new_slot);
             }
-            Node::Add(a, b)
-            | Node::Sub(a, b)
-            | Node::Mul(a, b)
-            | Node::Div(a, b)
-            | Node::Pow(a, b)
-            | Node::Mod(a, b)
-            | Node::F2(_, a, b)
-            | Node::ExtF2(_, a, b) => {
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Div(a, b)
+            | Self::Pow(a, b)
+            | Self::Mod(a, b)
+            | Self::F2(_, a, b)
+            | Self::ExtF2(_, a, b) => {
                 a.remap_cse_slot(old_slot, new_slot);
                 b.remap_cse_slot(old_slot, new_slot);
             }
-            Node::Let(_, expr, body) => {
+            Self::Let(_, expr, body) => {
                 expr.remap_cse_slot(old_slot, new_slot);
                 body.remap_cse_slot(old_slot, new_slot);
             }
@@ -851,18 +863,21 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
             };
         }
         let masks: Vec<IndexSet> = {
+            #[expect(clippy::indexing_slicing)]
             let rest = &spatial_dims[1..];
             let n = rest.len();
             let total = ArithIndexSet(IndexSet::singleton(n));
             let mut masks_by_popcount: Vec<Vec<IndexSet>> = vec![Vec::new(); n + 2];
             // generate only masks containing spatial_dims[0], skipping full set
             for bits in total.range_to().rev().skip(1) {
+                #[expect(clippy::indexing_slicing)]
                 let mut msk = IndexSet::singleton(spatial_dims[0]);
                 for (i, &dim) in rest.iter().enumerate() {
                     if bits.contains(i) {
                         msk.insert(dim, true);
                     }
                 }
+                #[expect(clippy::indexing_slicing)]
                 masks_by_popcount[msk.count_ones()].push(msk);
             }
             masks_by_popcount.into_iter().rev().flatten().collect()
@@ -895,9 +910,9 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
     #[inline]
     fn inlined(&self) -> InlinedChild {
         match self {
-            Node::Num(v) => InlinedChild::Num(*v),
-            Node::Var(i) => InlinedChild::Var(*i),
-            Node::CseRef(slot, _) => InlinedChild::Cse(*slot),
+            Self::Num(v) => InlinedChild::Num(*v),
+            Self::Var(i) => InlinedChild::Var(*i),
+            Self::CseRef(slot, _) => InlinedChild::Cse(*slot),
             _ => InlinedChild::Compound(self.compile()),
         }
     }
@@ -906,16 +921,11 @@ impl<EF1: ExtF1, EF2: ExtF2> Node<EF1, EF2> {
         include!(concat!(env!("OUT_DIR"), "/unop.rs"))
     }
 
-    fn compile_binop(&self, b: &Node<EF1, EF2>, op: fn(f64, f64) -> f64) -> CompiledExpr {
+    fn compile_binop(&self, b: &Self, op: fn(f64, f64) -> f64) -> CompiledExpr {
         include!(concat!(env!("OUT_DIR"), "/binop.rs"))
     }
 
-    fn compile_terop(
-        &self,
-        b: &Node<EF1, EF2>,
-        c: &Node<EF1, EF2>,
-        op: fn(f64, f64, f64) -> f64,
-    ) -> CompiledExpr {
+    fn compile_terop(&self, b: &Self, c: &Self, op: fn(f64, f64, f64) -> f64) -> CompiledExpr {
         include!(concat!(env!("OUT_DIR"), "/terop.rs"))
     }
 }

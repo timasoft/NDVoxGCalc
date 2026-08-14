@@ -25,7 +25,7 @@ impl Lexer {
 
     fn advance(&mut self) -> Option<char> {
         let c = self.chars.get(self.pos).copied();
-        self.pos += 1;
+        self.pos = self.pos.wrapping_add(1);
         c
     }
 
@@ -93,9 +93,9 @@ impl Lexer {
                 Ok(Token::Comma)
             }
             c if c.is_ascii_digit() || c == '.' => self.read_number(),
-            c if c.is_ascii_alphabetic() => self.read_ident(),
+            c if c.is_ascii_alphabetic() => Ok(self.read_ident()),
             c => Err(Error::Lexer {
-                col: self.token_start + 1,
+                col: self.token_start.wrapping_add(1),
                 kind: LexerErrorKind::UnexpectedChar(c),
             }),
         }
@@ -139,14 +139,19 @@ impl Lexer {
             }
         }
 
-        let s: String = self.chars[start..self.pos].iter().collect();
+        let s: String = self
+            .chars
+            .get(start..self.pos)
+            .unwrap_or_default()
+            .iter()
+            .collect();
         s.parse::<f64>().map(Token::Num).map_err(|_| Error::Lexer {
-            col: self.token_start + 1,
+            col: self.token_start.wrapping_add(1),
             kind: LexerErrorKind::InvalidNumber(s),
         })
     }
 
-    fn read_ident(&mut self) -> Result<Token, Error> {
+    fn read_ident(&mut self) -> Token {
         let start = self.pos;
         while let Some(c) = self.peek() {
             if c.is_ascii_alphanumeric() {
@@ -155,8 +160,13 @@ impl Lexer {
                 break;
             }
         }
-        let s: String = self.chars[start..self.pos].iter().collect();
-        Ok(Token::Ident(s))
+        let s: String = self
+            .chars
+            .get(start..self.pos)
+            .unwrap_or_default()
+            .iter()
+            .collect();
+        Token::Ident(s)
     }
 }
 
@@ -186,9 +196,9 @@ impl<'a, V: VarMap> Parser<'a, V> {
         Ok(())
     }
 
-    fn err_at(&self, kind: ParseErrorKind) -> Error {
+    const fn err_at(&self, kind: ParseErrorKind) -> Error {
         Error::Parser {
-            col: self.current_pos + 1,
+            col: self.current_pos.wrapping_add(1),
             kind,
         }
     }
@@ -301,14 +311,14 @@ impl<'a, V: VarMap> Parser<'a, V> {
                 Ok(Node::Num(val))
             }
             Token::Ident(name) => {
-                let name = name.clone();
+                let name_clone = name.clone();
                 self.advance()?;
                 if matches!(self.current, Token::LParen) {
-                    self.parse_function_call::<EF0, EF1, EF2>(&name)
+                    self.parse_function_call::<EF0, EF1, EF2>(&name_clone)
                 } else {
                     Ok(resolve_ident::<V, EF0, EF1, EF2>(
-                        &name,
-                        self.current_pos + 1,
+                        &name_clone,
+                        self.current_pos.wrapping_add(1),
                         self.vars,
                     )?)
                 }
@@ -346,29 +356,28 @@ impl<'a, V: VarMap> Parser<'a, V> {
 
         if matches!(self.current, Token::RParen) {
             self.advance()?;
-            return match F0::from_str(name) {
-                Ok(f) => Ok(Node::Num(f.to_num())),
-                Err(_) => {
-                    if let Ok(f) = EF0::from_str(name) {
-                        return Ok(Node::Num(f.to_num()));
-                    }
-                    let kind = if F1::from_str(name).is_ok() || EF1::from_str(name).is_ok() {
-                        ParseErrorKind::FunctionArgCount {
-                            name: name.to_string(),
-                            expected: 1,
-                            found: 0,
-                        }
-                    } else if F2::from_str(name).is_ok() || EF2::from_str(name).is_ok() {
-                        ParseErrorKind::FunctionArgCount {
-                            name: name.to_string(),
-                            expected: 2,
-                            found: 0,
-                        }
-                    } else {
-                        ParseErrorKind::UnknownIdentifier(name.to_string())
-                    };
-                    Err(self.err_at(kind))
+            return if let Ok(f) = F0::from_str(name) {
+                Ok(Node::Num(f.to_num()))
+            } else {
+                if let Ok(f) = EF0::from_str(name) {
+                    return Ok(Node::Num(f.to_num()));
                 }
+                let kind = if F1::from_str(name).is_ok() || EF1::from_str(name).is_ok() {
+                    ParseErrorKind::FunctionArgCount {
+                        name: name.to_owned(),
+                        expected: 1,
+                        found: 0,
+                    }
+                } else if F2::from_str(name).is_ok() || EF2::from_str(name).is_ok() {
+                    ParseErrorKind::FunctionArgCount {
+                        name: name.to_owned(),
+                        expected: 2,
+                        found: 0,
+                    }
+                } else {
+                    ParseErrorKind::UnknownIdentifier(name.to_owned())
+                };
+                Err(self.err_at(kind))
             };
         }
 
@@ -382,29 +391,28 @@ impl<'a, V: VarMap> Parser<'a, V> {
             }
             self.advance()?;
 
-            match F2::from_str(name) {
-                Ok(f) => Ok(Node::F2(f, Box::new(arg1), Box::new(arg2))),
-                Err(_) => {
-                    if let Ok(f) = EF2::from_str(name) {
-                        return Ok(Node::ExtF2(f, Box::new(arg1), Box::new(arg2)));
-                    }
-                    let kind = if F1::from_str(name).is_ok() || EF1::from_str(name).is_ok() {
-                        ParseErrorKind::FunctionArgCount {
-                            name: name.to_string(),
-                            expected: 1,
-                            found: 2,
-                        }
-                    } else if F0::from_str(name).is_ok() || EF0::from_str(name).is_ok() {
-                        ParseErrorKind::FunctionArgCount {
-                            name: name.to_string(),
-                            expected: 0,
-                            found: 2,
-                        }
-                    } else {
-                        ParseErrorKind::UnknownIdentifier(name.to_string())
-                    };
-                    Err(self.err_at(kind))
+            if let Ok(f) = F2::from_str(name) {
+                Ok(Node::F2(f, Box::new(arg1), Box::new(arg2)))
+            } else {
+                if let Ok(f) = EF2::from_str(name) {
+                    return Ok(Node::ExtF2(f, Box::new(arg1), Box::new(arg2)));
                 }
+                let kind = if F1::from_str(name).is_ok() || EF1::from_str(name).is_ok() {
+                    ParseErrorKind::FunctionArgCount {
+                        name: name.to_owned(),
+                        expected: 1,
+                        found: 2,
+                    }
+                } else if F0::from_str(name).is_ok() || EF0::from_str(name).is_ok() {
+                    ParseErrorKind::FunctionArgCount {
+                        name: name.to_owned(),
+                        expected: 0,
+                        found: 2,
+                    }
+                } else {
+                    ParseErrorKind::UnknownIdentifier(name.to_owned())
+                };
+                Err(self.err_at(kind))
             }
         } else {
             if !matches!(self.current, Token::RParen) {
@@ -414,29 +422,28 @@ impl<'a, V: VarMap> Parser<'a, V> {
             }
             self.advance()?;
 
-            match F1::from_str(name) {
-                Ok(f) => Ok(Node::F1(f, Box::new(arg1))),
-                Err(_) => {
-                    if let Ok(f) = EF1::from_str(name) {
-                        return Ok(Node::ExtF1(f, Box::new(arg1)));
-                    }
-                    let kind = if F0::from_str(name).is_ok() || EF0::from_str(name).is_ok() {
-                        ParseErrorKind::FunctionArgCount {
-                            name: name.to_string(),
-                            expected: 0,
-                            found: 1,
-                        }
-                    } else if F2::from_str(name).is_ok() || EF2::from_str(name).is_ok() {
-                        ParseErrorKind::FunctionArgCount {
-                            name: name.to_string(),
-                            expected: 2,
-                            found: 1,
-                        }
-                    } else {
-                        ParseErrorKind::UnknownIdentifier(name.to_string())
-                    };
-                    Err(self.err_at(kind))
+            if let Ok(f) = F1::from_str(name) {
+                Ok(Node::F1(f, Box::new(arg1)))
+            } else {
+                if let Ok(f) = EF1::from_str(name) {
+                    return Ok(Node::ExtF1(f, Box::new(arg1)));
                 }
+                let kind = if F0::from_str(name).is_ok() || EF0::from_str(name).is_ok() {
+                    ParseErrorKind::FunctionArgCount {
+                        name: name.to_owned(),
+                        expected: 0,
+                        found: 1,
+                    }
+                } else if F2::from_str(name).is_ok() || EF2::from_str(name).is_ok() {
+                    ParseErrorKind::FunctionArgCount {
+                        name: name.to_owned(),
+                        expected: 2,
+                        found: 1,
+                    }
+                } else {
+                    ParseErrorKind::UnknownIdentifier(name.to_owned())
+                };
+                Err(self.err_at(kind))
             }
         }
     }
@@ -454,7 +461,7 @@ where
 {
     if let Ok(f) = F0::from_str(name) {
         return Ok(Node::Num(f.to_num()));
-    };
+    }
 
     if let Ok(f) = EF0::from_str(name) {
         return Ok(Node::Num(f.to_num()));
@@ -475,7 +482,7 @@ where
         return Err(Error::Parser {
             col,
             kind: ParseErrorKind::VarOutOfRange {
-                name: name.to_string(),
+                name: name.to_owned(),
                 max: vars.ndim().saturating_sub(1),
             },
         });
@@ -483,11 +490,16 @@ where
 
     Err(Error::Parser {
         col,
-        kind: ParseErrorKind::UnknownIdentifier(name.to_string()),
+        kind: ParseErrorKind::UnknownIdentifier(name.to_owned()),
     })
 }
 
 /// Parse an expression string into a `Node` AST.
+///
+/// # Errors
+/// Returns [`Error::Lexer`] for invalid characters/numbers and [`Error::Parser`]
+/// for malformed expressions (unknown identifiers, trailing tokens, wrong
+/// function arity, missing delimiters, out-of-range variables).
 ///
 /// # Examples
 /// ```
@@ -509,6 +521,11 @@ pub fn parse<V: VarMap>(expr_str: &str, vars: &V) -> Result<Node, Error> {
 
 /// Validate an expression string without producing a compiled result.
 ///
+/// # Errors
+/// Returns [`Error::Lexer`] for invalid characters/numbers and [`Error::Parser`]
+/// for malformed expressions (empty input, unknown identifiers, trailing
+/// tokens, wrong function arity, missing delimiters, out-of-range variables).
+///
 /// # Examples
 /// ```
 /// # use hypervox_expr::{validate, VarMap};
@@ -526,6 +543,11 @@ pub fn validate<V: VarMap>(expr_str: &str, vars: &V) -> Result<(), Error> {
 }
 
 /// Parse an expression string into a `Node` AST, with support for custom extension functions.
+///
+/// # Errors
+/// Returns [`Error::Lexer`] for invalid characters/numbers and [`Error::Parser`]
+/// for malformed expressions (unknown identifiers, trailing tokens, wrong
+/// function arity, missing delimiters, out-of-range variables).
 ///
 /// # Examples
 /// ```
@@ -557,6 +579,11 @@ where
 }
 
 /// Validate an expression string without producing a compiled result, with support for custom extension functions.
+///
+/// # Errors
+/// Returns [`Error::Lexer`] for invalid characters/numbers and [`Error::Parser`]
+/// for malformed expressions (empty input, unknown identifiers, trailing
+/// tokens, wrong function arity, missing delimiters, out-of-range variables).
 ///
 /// # Examples
 /// ```

@@ -51,7 +51,7 @@ macro_rules! define_f0 {
             /// let pi = F0::PI.to_num();
             /// assert!((pi - std::f64::consts::PI).abs() < 1e-15);
             /// ```
-            pub fn to_num(self) -> f64 {
+            pub const fn to_num(self) -> f64 {
                 match self {
                     $(Self::$variant => $body,)*
                 }
@@ -88,7 +88,7 @@ macro_rules! define_f1 {
             /// assert!((f(1.0) - 1.0_f64.sin()).abs() < 1e-15);
             /// ```
             #[inline]
-            pub fn to_fn(self) -> fn(f64) -> f64 {
+            pub const fn to_fn(self) -> fn(f64) -> f64 {
                 match self {
                     $(Self::$variant => $body,)*
                 }
@@ -125,7 +125,7 @@ macro_rules! define_f2 {
             /// assert_eq!(atan2(0.0, 1.0), 0.0);
             /// ```
             #[inline]
-            pub fn to_fn(self) -> fn(f64, f64) -> f64 {
+            pub const fn to_fn(self) -> fn(f64, f64) -> f64 {
                 match self {
                     $(Self::$variant => $body,)*
                 }
@@ -176,11 +176,11 @@ define_f1! {
 define_f2! {
     Atan2 => "atan2" = f64::atan2,
     Pow => "pow" = |a, b| {
-        if a == 0.0 && b == 0.0 {
-            1.0
+        if a == 0.0_f64 && b == 0.0_f64 {
+            1.0_f64
         } else {
             let exp_int = b as i32;
-            if (exp_int as f64) == b {
+            if f64::from(exp_int) == b {
                 a.powi(exp_int)
             } else {
                 a.powf(b)
@@ -197,6 +197,7 @@ define_f2! {
 /// let list = f0_list();
 /// assert!(list.contains("PI"));
 /// ```
+#[must_use]
 pub fn f0_list() -> String {
     F0::NAMES.join(", ")
 }
@@ -209,6 +210,7 @@ pub fn f0_list() -> String {
 /// let list = f1_list();
 /// assert!(list.contains("sin"));
 /// ```
+#[must_use]
 pub fn f1_list() -> String {
     F1::NAMES.join(", ")
 }
@@ -221,6 +223,7 @@ pub fn f1_list() -> String {
 /// let list = f2_list();
 /// assert!(list.contains("atan2"));
 /// ```
+#[must_use]
 pub fn f2_list() -> String {
     F2::NAMES.join(", ")
 }
@@ -288,6 +291,7 @@ macro_rules! define_ext_f0 {
     };
     ($enum_name:ident, $($variant:ident => $str:literal = $body:expr),* $(,)?) => {
         /// Constants.
+        #[expect(clippy::derive_partial_eq_without_eq)]
         #[derive(Debug, Clone, Copy, PartialEq)]
         pub enum $enum_name {
             $($variant,)*
@@ -408,7 +412,7 @@ macro_rules! define_ext_f2 {
 ///
 /// Acts as the default type parameter for [`Node`], [`parse`], and [`validate`]
 /// so that the regular API requires no generics.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoExtF {}
 
 impl ExtF0 for NoExtF {

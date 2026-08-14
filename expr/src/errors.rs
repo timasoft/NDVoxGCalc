@@ -40,8 +40,8 @@ pub enum ParseErrorKind {
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Lexer { col, kind } => write!(f, "at column {col}: {kind}"),
-            Error::Parser { col, kind } => write!(f, "at column {col}: {kind}"),
+            Self::Lexer { col, kind } => write!(f, "at column {col}: {kind}"),
+            Self::Parser { col, kind } => write!(f, "at column {col}: {kind}"),
         }
     }
 }
@@ -49,8 +49,8 @@ impl Display for Error {
 impl Display for LexerErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LexerErrorKind::UnexpectedChar(c) => write!(f, "unexpected character '{c}'"),
-            LexerErrorKind::InvalidNumber(s) => write!(f, "invalid number '{s}'"),
+            Self::UnexpectedChar(c) => write!(f, "unexpected character '{c}'"),
+            Self::InvalidNumber(s) => write!(f, "invalid number '{s}'"),
         }
     }
 }
@@ -58,20 +58,20 @@ impl Display for LexerErrorKind {
 impl Display for ParseErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseErrorKind::EmptyExpression => write!(f, "expression cannot be empty"),
-            ParseErrorKind::TrailingToken(tok) => {
+            Self::EmptyExpression => write!(f, "expression cannot be empty"),
+            Self::TrailingToken(tok) => {
                 write!(f, "unexpected token {tok} after expression")
             }
-            ParseErrorKind::ExpectedRParen(tok) => {
+            Self::ExpectedRParen(tok) => {
                 write!(f, "expected ')' but found {tok}")
             }
-            ParseErrorKind::ExpectedPipe(tok) => {
+            Self::ExpectedPipe(tok) => {
                 write!(f, "expected '|' but found {tok}")
             }
-            ParseErrorKind::UnexpectedToken(tok) => {
+            Self::UnexpectedToken(tok) => {
                 write!(f, "unexpected token {tok}")
             }
-            ParseErrorKind::FunctionArgCount {
+            Self::FunctionArgCount {
                 name,
                 expected,
                 found,
@@ -86,13 +86,13 @@ impl Display for ParseErrorKind {
                     "function '{name}' requires {expected} {s}, but found {found}"
                 )
             }
-            ParseErrorKind::ExpectedRParenOrComma(tok) => {
+            Self::ExpectedRParenOrComma(tok) => {
                 write!(f, "expected ')' or ',' but found {tok}")
             }
-            ParseErrorKind::VarOutOfRange { name, max } => {
+            Self::VarOutOfRange { name, max } => {
                 write!(f, "variable '{name}' out of range: max index is {max}")
             }
-            ParseErrorKind::UnknownIdentifier(name) => {
+            Self::UnknownIdentifier(name) => {
                 write!(f, "unknown identifier '{name}'")
             }
         }
@@ -113,10 +113,10 @@ pub enum ArithIndexSetTryFromError {
 impl std::fmt::Display for ArithIndexSetTryFromError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ArithIndexSetTryFromError::Overflow => {
+            Self::Overflow => {
                 write!(f, "value too large for target type")
             }
-            ArithIndexSetTryFromError::Negative => {
+            Self::Negative => {
                 write!(f, "negative value cannot be represented as ArithIndexSet")
             }
         }

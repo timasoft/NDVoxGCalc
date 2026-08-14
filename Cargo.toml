@@ -14,6 +14,9 @@ homepage = "https://github.com/timasoft/hypervox"
 keywords = ["voxel", "math", "calculator", "3d", "bevy"]
 categories = ["graphics", "visualization", "mathematics"]
 
+[features]
+fma = ["hypervox_expr/fma"]
+
 [profile.release]
 opt-level = "s"
 lto = "thin"

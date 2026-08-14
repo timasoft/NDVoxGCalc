@@ -73,7 +73,7 @@
         };
       };
 
-      native = craneLib.buildPackage {
+      buildNative = fma: craneLib.buildPackage {
         pname = "hypervox";
         version = "0.1.0";
         inherit src;
@@ -85,11 +85,14 @@
 
         doCheck = false;
 
+        cargoExtraArgs = pkgs.lib.optionalString fma "--features fma";
+
         env = {
           PKG_CONFIG_PATH = pkgConfigPath;
           CARGO_PROFILE_RELEASE_LTO = "true";
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
-        };
+          CARGO_PROFILE_RELEASE_STRIP = "symbols";
+        } // (pkgs.lib.optionalAttrs fma { RUSTFLAGS = "-C target-feature=+fma"; });
 
         postFixup = ''
           if [ -x "$out/bin/hypervox" ]; then
@@ -99,6 +102,10 @@
           fi
         '';
       };
+
+      native = buildNative false;
+
+      native-fma = buildNative true;
 
       webCargoArtifacts = craneLib.buildDepsOnly {
         inherit src;
@@ -145,7 +152,7 @@ EOF
     in
     {
       packages = {
-        inherit native web;
+        inherit native native-fma web;
         default = native;
       };
 
