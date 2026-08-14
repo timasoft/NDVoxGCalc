@@ -462,7 +462,7 @@ mod evalexpr_bench {
                 .eval_with_context(&ctx)
                 .expect("eval should not fail")
                 .as_number()
-                .expect("convertion should not fail");
+                .expect("conversion should not fail");
 
             let expected = direct_fn(v[0], v[1], v[2]);
             assert!(
@@ -506,7 +506,7 @@ mod evalexpr_bench {
                                     .eval_with_context_mut(&mut ctx)
                                     .expect("eval should not fail")
                                     .as_number()
-                                    .expect("convertion should not fail"),
+                                    .expect("conversion should not fail"),
                             );
                         }
                     }
