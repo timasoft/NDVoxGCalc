@@ -153,7 +153,8 @@ pub fn set_parallel_available(val: bool) {
     let _ = PARALLEL_AVAILABLE.set(val);
 }
 
-pub const fn parallel_available() -> bool {
+#[cfg_attr(not(target_arch = "wasm32"), expect(clippy::missing_const_for_fn))]
+pub fn parallel_available() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         *PARALLEL_AVAILABLE.get().unwrap_or(&false)
