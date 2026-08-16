@@ -11,10 +11,10 @@ use crate::utils::{
     parallel_available,
 };
 
-pub struct GenerationTimings {
-    pub parse_ms: f64,
-    pub sign_grid_ms: f64,
-    pub composite_ms: f64,
+pub struct GenerationTimingsMs {
+    pub parse: f64,
+    pub sign_grid: f64,
+    pub composite: f64,
 }
 
 pub fn generate_voxels(
@@ -22,14 +22,14 @@ pub fn generate_voxels(
     expr_config: &ExpressionConfig,
     expr_status: &mut ExpressionStatus,
     dim_mapping: &DimMapping,
-) -> (Vec<PackedColor>, usize, GenerationTimings) {
+) -> (Vec<PackedColor>, usize, GenerationTimingsMs) {
     let size_usize = grid_config.size as usize;
-    let half_extent = (grid_config.size as f64) / 2.0 * grid_config.voxel_size;
+    let half_extent = f64::from(grid_config.size) / 2.0_f64 * grid_config.voxel_size;
 
-    let mut timings = GenerationTimings {
-        parse_ms: 0.0,
-        sign_grid_ms: 0.0,
-        composite_ms: 0.0,
+    let mut timings = GenerationTimingsMs {
+        parse: 0.0,
+        sign_grid: 0.0,
+        composite: 0.0,
     };
 
     expr_status.errors.clear();
@@ -42,15 +42,18 @@ pub fn generate_voxels(
         }
         match hypervox_expr::parse(&entry.expr, &DimConfig::from(dim_mapping)) {
             Ok(expr) => exprs.push((expr, pack_color(entry.color))),
-            Err(e) => {
+            Err(err) => {
                 expr_status.is_valid = false;
-                expr_status
-                    .errors
-                    .push(format!("Expression #{} '{}': {}", idx + 1, entry.expr, e));
+                expr_status.errors.push(format!(
+                    "Expression #{} '{}': {}",
+                    idx.wrapping_add(1),
+                    entry.expr,
+                    err
+                ));
             }
         }
     }
-    timings.parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
+    timings.parse = parse_start.elapsed().as_secs_f64() * 1000.0_f64;
 
     let (composite, grid_timings, rendered_voxel_count) =
         match generate_voxel_grid_multi_with_composing(
@@ -61,22 +64,22 @@ pub fn generate_voxels(
             parallel_available(),
         ) {
             Ok(result) => result,
-            Err(e) => {
+            Err(err) => {
                 expr_status.is_valid = false;
-                expr_status.errors.push(e);
+                expr_status.errors.push(err);
                 return (Vec::new(), 0, timings);
             }
         };
 
-    timings.sign_grid_ms = grid_timings.sign_grid_ms;
-    timings.composite_ms = grid_timings.composite_ms;
+    timings.sign_grid = grid_timings.sign_grid;
+    timings.composite = grid_timings.composite;
 
     // Only mark as valid if no errors occurred AND at least one enabled expression exists
     if expr_status.errors.is_empty()
         && expr_config
             .entries
             .iter()
-            .any(|e| e.enabled && !e.expr.trim().is_empty())
+            .any(|entry| entry.enabled && !entry.expr.trim().is_empty())
     {
         expr_status.is_valid = true;
     }

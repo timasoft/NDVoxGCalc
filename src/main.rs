@@ -17,9 +17,9 @@ use web_time::Instant;
 
 use crate::generate::generate_voxels;
 use crate::utils::{
-    CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, DimMapping, ExpressionConfig,
-    ExpressionStatus, GridConfig, ProfilingData, RegenerateEveryFrame, SceneEntities,
-    ShowAxesPlanes, parallel_available,
+    CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, CondMulAdd as _, DimMapping,
+    ExpressionConfig, ExpressionStatus, GridConfig, ProfilingDataMs, RegenerateEveryFrame,
+    SceneEntities, ShowAxesPlanes, parallel_available,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -52,7 +52,7 @@ async fn wasm_start() {
 
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = rayon::ThreadPoolBuilder::new().build_global();
+    let _: Result<(), rayon::ThreadPoolBuildError> = rayon::ThreadPoolBuilder::new().build_global();
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -92,6 +92,7 @@ fn main() {
         .run();
 }
 
+#[expect(clippy::needless_pass_by_value)]
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -104,12 +105,8 @@ fn setup(
     let cam_entity = commands
         .spawn((
             Camera3d::default(),
-            Transform::from_xyz(
-                Vec3::ZERO.x + CAMERA_RADIUS * 0.7,
-                Vec3::ZERO.y + CAMERA_HEIGHT,
-                Vec3::ZERO.z + CAMERA_RADIUS * 0.7,
-            )
-            .looking_at(Vec3::ZERO, Vec3::Y),
+            Transform::from_xyz(CAMERA_RADIUS * 0.7, CAMERA_HEIGHT, CAMERA_RADIUS * 0.7)
+                .looking_at(Vec3::ZERO, Vec3::Y),
             Exposure { ev100: 0.0 },
             Tonemapping::None,
             PanOrbitCamera {
@@ -148,15 +145,15 @@ fn setup(
         );
     }
 
-    let mesh_build_ms = mesh_start.elapsed().as_secs_f64() * 1000.0;
-    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+    let mesh_build = mesh_start.elapsed().as_secs_f64() * 1000.0_f64;
+    let total = total_start.elapsed().as_secs_f64() * 1000.0_f64;
 
-    commands.insert_resource(ProfilingData {
-        parse_ms: gen_timings.parse_ms,
-        sign_grid_ms: gen_timings.sign_grid_ms,
-        composite_ms: gen_timings.composite_ms,
-        mesh_build_ms,
-        total_ms,
+    commands.insert_resource(ProfilingDataMs {
+        parse: gen_timings.parse,
+        sign_grid: gen_timings.sign_grid,
+        composite: gen_timings.composite,
+        mesh_build,
+        total,
     });
 
     let mesh_handle = meshes.add(mesh);
@@ -185,15 +182,17 @@ fn setup(
     });
 }
 
+#[expect(clippy::needless_pass_by_value)]
 fn draw_axes_and_planes(
     mut gizmos: Gizmos,
     grid_config: Res<GridConfig>,
     show: Res<ShowAxesPlanes>,
     camera_query: Query<&Transform, With<Camera3d>>,
 ) {
-    let inv_size = 1.0 / grid_config.size as f32;
+    let inv_size = 1.0 / f32::from(grid_config.size);
     let n = grid_config.size;
-    let step = ((n as f32 / 32.0).round() as u32).next_power_of_two();
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let step = ((f32::from(n) / 32.0).round() as u32).next_power_of_two();
 
     if show.show_axes {
         gizmos.line(
@@ -212,14 +211,16 @@ fn draw_axes_and_planes(
             Color::srgb(0.2, 0.2, 1.0),
         );
 
-        let cam_t = camera_query.iter().next().cloned().unwrap_or_default();
+        let cam_t = camera_query.iter().next().copied().unwrap_or_default();
 
         for (pos, label, color) in [
             (Vec3::new(0.55, 0.0, 0.0), "X", Color::srgb(1.0, 0.2, 0.2)),
             (Vec3::new(0.0, 0.55, 0.0), "Y", Color::srgb(0.2, 1.0, 0.2)),
             (Vec3::new(0.0, 0.0, 0.55), "Z", Color::srgb(0.2, 0.2, 1.0)),
         ] {
+            #[expect(clippy::arithmetic_side_effects)]
             let view_dir = (cam_t.translation - pos).normalize();
+            #[expect(clippy::arithmetic_side_effects)]
             let cam_up = cam_t.rotation * Vec3::Y;
             let right = cam_up.cross(view_dir).normalize();
             let up = view_dir.cross(right);
@@ -233,9 +234,9 @@ fn draw_axes_and_planes(
         let gc = Color::srgba(0.5, 0.5, 0.5, 0.35);
 
         for i in (0..=n).step_by(step as usize) {
-            let p = i as f32 * inv_size - 0.5;
-            gizmos.line(Vec3::new(-0.5, -0.5, p), Vec3::new(0.5, -0.5, p), gc);
-            gizmos.line(Vec3::new(p, -0.5, -0.5), Vec3::new(p, -0.5, 0.5), gc);
+            let pos = f32::from(i).cond_mul_add(inv_size, -0.5);
+            gizmos.line(Vec3::new(-0.5, -0.5, pos), Vec3::new(0.5, -0.5, pos), gc);
+            gizmos.line(Vec3::new(pos, -0.5, -0.5), Vec3::new(pos, -0.5, 0.5), gc);
         }
     }
 
@@ -243,29 +244,30 @@ fn draw_axes_and_planes(
         // XY plane at z = center.z — red grid
         let cr = Color::srgba(1.0, 0.2, 0.2, 0.3);
         for i in (0..=n).step_by(step as usize) {
-            let p = i as f32 * inv_size - 0.5;
-            gizmos.line(Vec3::new(-0.5, p, 0.0), Vec3::new(0.5, p, 0.0), cr);
-            gizmos.line(Vec3::new(p, -0.5, 0.0), Vec3::new(p, 0.5, 0.0), cr);
+            let pos = f32::from(i).cond_mul_add(inv_size, -0.5);
+            gizmos.line(Vec3::new(-0.5, pos, 0.0), Vec3::new(0.5, pos, 0.0), cr);
+            gizmos.line(Vec3::new(pos, -0.5, 0.0), Vec3::new(pos, 0.5, 0.0), cr);
         }
 
         // XZ plane at y = center.y — green grid
         let cg = Color::srgba(0.2, 1.0, 0.2, 0.3);
         for i in (0..=n).step_by(step as usize) {
-            let p = i as f32 * inv_size - 0.5;
-            gizmos.line(Vec3::new(-0.5, 0.0, p), Vec3::new(0.5, 0.0, p), cg);
-            gizmos.line(Vec3::new(p, 0.0, -0.5), Vec3::new(p, 0.0, 0.5), cg);
+            let pos = f32::from(i).cond_mul_add(inv_size, -0.5);
+            gizmos.line(Vec3::new(-0.5, 0.0, pos), Vec3::new(0.5, 0.0, pos), cg);
+            gizmos.line(Vec3::new(pos, 0.0, -0.5), Vec3::new(pos, 0.0, 0.5), cg);
         }
 
         // YZ plane at x = center.x — blue grid
         let cb = Color::srgba(0.2, 0.2, 1.0, 0.3);
         for i in (0..=n).step_by(step as usize) {
-            let p = i as f32 * inv_size - 0.5;
-            gizmos.line(Vec3::new(0.0, -0.5, p), Vec3::new(0.0, 0.5, p), cb);
-            gizmos.line(Vec3::new(0.0, p, -0.5), Vec3::new(0.0, p, 0.5), cb);
+            let pos = f32::from(i).cond_mul_add(inv_size, -0.5);
+            gizmos.line(Vec3::new(0.0, -0.5, pos), Vec3::new(0.0, 0.5, pos), cb);
+            gizmos.line(Vec3::new(0.0, pos, -0.5), Vec3::new(0.0, pos, 0.5), cb);
         }
     }
 }
 
+#[expect(clippy::needless_pass_by_value)]
 fn rotate_camera(
     time: Res<Time>,
     mut camera: ResMut<CameraState>,
@@ -274,13 +276,13 @@ fn rotate_camera(
     if camera.mode != CameraMode::AutoOrbit {
         return;
     }
-    camera.angle += time.delta_secs() * camera.speed;
-    for mut t in query_camera.iter_mut() {
-        t.translation = Vec3::new(
-            Vec3::ZERO.x + CAMERA_RADIUS * camera.angle.cos(),
-            Vec3::ZERO.y + CAMERA_HEIGHT,
-            Vec3::ZERO.z + CAMERA_RADIUS * camera.angle.sin(),
+    camera.angle = time.delta_secs().cond_mul_add(camera.speed, camera.angle);
+    for mut transform in query_camera.iter_mut() {
+        transform.translation = Vec3::new(
+            CAMERA_RADIUS * camera.angle.cos(),
+            CAMERA_HEIGHT,
+            CAMERA_RADIUS * camera.angle.sin(),
         );
-        t.look_at(Vec3::ZERO, Vec3::Y);
+        transform.look_at(Vec3::ZERO, Vec3::Y);
     }
 }

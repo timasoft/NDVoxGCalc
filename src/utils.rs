@@ -6,28 +6,29 @@ use bevy::prelude::*;
 /// Always a power of two: `pow2_ceil(step * 2^53)`.
 #[inline]
 pub fn first_bad_offset(step: f64) -> f64 {
-    let v = step * (1u64 << f64::MANTISSA_DIGITS) as f64;
-    let bits = v.to_bits();
-    let mantissa_bits = f64::MANTISSA_DIGITS as u64 - 1;
-    let mantissa_mask = (1u64 << mantissa_bits) - 1;
+    let val = step * (1_u64 << f64::MANTISSA_DIGITS) as f64;
+    let bits = val.to_bits();
+    let mantissa_bits = f64::MANTISSA_DIGITS - 1;
+    #[expect(clippy::arithmetic_side_effects)]
+    let mantissa_mask = (1_u64 << mantissa_bits) - 1;
     if bits & mantissa_mask == 0 {
-        v
+        val
     } else {
-        f64::from_bits((bits & !mantissa_mask) + (1u64 << mantissa_bits))
+        f64::from_bits((bits & !mantissa_mask).wrapping_add(1_u64 << mantissa_bits))
     }
 }
 
 /// Largest `voxel_size` where `first_bad_offset(v)` stays finite.
 /// Bound: `v * 2^53 < f64::MAX` → `v < f64::MAX / 2^53`.
 /// One ULP below that threshold to avoid `first_bad_offset` returning ∞.
-pub const MAX_VOXEL_SIZE: f64 = (f64::MAX / (1u64 << f64::MANTISSA_DIGITS) as f64).next_down();
+pub const MAX_VOXEL_SIZE: f64 = (f64::MAX / (1_u64 << f64::MANTISSA_DIGITS) as f64).next_down();
 
 pub const CAMERA_RADIUS: f32 = 1.5;
 pub const CAMERA_HEIGHT: f32 = 0.8;
 
 #[derive(Resource)]
 pub struct GridConfig {
-    pub size: u32,
+    pub size: u16,
     pub voxel_size: f64,
     pub voxel_count: usize,
 }
@@ -103,6 +104,16 @@ pub struct ExpressionEntry {
     pub enabled: bool,
 }
 
+impl Default for ExpressionEntry {
+    fn default() -> Self {
+        Self {
+            expr: "x^2 + z * y - 64.0".into(),
+            color: rand::random(),
+            enabled: true,
+        }
+    }
+}
+
 #[derive(Resource)]
 pub struct ExpressionConfig {
     pub entries: Vec<ExpressionEntry>,
@@ -111,11 +122,7 @@ pub struct ExpressionConfig {
 impl Default for ExpressionConfig {
     fn default() -> Self {
         Self {
-            entries: vec![ExpressionEntry {
-                expr: "x^2 + z * y - 64.0".into(),
-                color: rand::random(),
-                enabled: true,
-            }],
+            entries: vec![ExpressionEntry::default()],
         }
     }
 }
@@ -127,12 +134,12 @@ pub struct ExpressionStatus {
 }
 
 #[derive(Resource, Default)]
-pub struct ProfilingData {
-    pub parse_ms: f64,
-    pub sign_grid_ms: f64,
-    pub composite_ms: f64,
-    pub mesh_build_ms: f64,
-    pub total_ms: f64,
+pub struct ProfilingDataMs {
+    pub parse: f64,
+    pub sign_grid: f64,
+    pub composite: f64,
+    pub mesh_build: f64,
+    pub total: f64,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -146,7 +153,7 @@ pub fn set_parallel_available(val: bool) {
     let _ = PARALLEL_AVAILABLE.set(val);
 }
 
-pub fn parallel_available() -> bool {
+pub const fn parallel_available() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         *PARALLEL_AVAILABLE.get().unwrap_or(&false)
@@ -160,16 +167,59 @@ pub fn parallel_available() -> bool {
 /// A 24-bit RGB color plus a "filled" marker, packed into `Option<NonZeroU32>`
 pub type PackedColor = Option<NonZeroU32>;
 
-#[inline(always)]
-pub fn pack_color((r, g, b): (u8, u8, u8)) -> PackedColor {
+#[expect(clippy::min_ident_chars)]
+#[inline]
+pub const fn pack_color((r, g, b): (u8, u8, u8)) -> PackedColor {
     NonZeroU32::new((((r as u32) << 16) | ((g as u32) << 8) | b as u32).wrapping_add(1))
 }
 
+#[expect(clippy::inline_always, clippy::min_ident_chars)]
 #[inline(always)]
 pub fn unpack_color(val: NonZeroU32) -> LinearRgba {
     let raw = val.get() - 1;
-    let r = ((raw >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((raw >> 8) & 0xFF) as f32 / 255.0;
-    let b = (raw & 0xFF) as f32 / 255.0;
+    let r = f32::from(((raw >> 16_usize) & 0xFF) as u8) / 255.0;
+    let g = f32::from(((raw >> 8_usize) & 0xFF) as u8) / 255.0;
+    let b = f32::from((raw & 0xFF) as u8) / 255.0;
     LinearRgba::rgb(r, g, b)
+}
+
+pub trait CondMulAdd {
+    #[expect(clippy::min_ident_chars)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self;
+}
+
+#[cfg(feature = "fma")]
+impl CondMulAdd for f64 {
+    #[inline]
+    #[expect(clippy::disallowed_methods)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self.mul_add(b, c)
+    }
+}
+
+#[cfg(not(feature = "fma"))]
+impl CondMulAdd for f64 {
+    #[inline]
+    #[expect(clippy::suboptimal_flops)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self * b + c
+    }
+}
+
+#[cfg(feature = "fma")]
+impl CondMulAdd for f32 {
+    #[inline]
+    #[expect(clippy::disallowed_methods)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self.mul_add(b, c)
+    }
+}
+
+#[cfg(not(feature = "fma"))]
+impl CondMulAdd for f32 {
+    #[inline]
+    #[expect(clippy::suboptimal_flops)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self * b + c
+    }
 }
