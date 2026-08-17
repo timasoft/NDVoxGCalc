@@ -486,3 +486,52 @@ impl Display for LexerToken {
         }
     }
 }
+
+/// Fused multiply-add that respects the `fma` feature flag.
+///
+/// Computes `self * b + c`. When the `fma` feature is enabled this maps to the
+/// hardware fused multiply-add (`mul_add`), preserving a single rounding step;
+/// otherwise it falls back to the separate multiply-then-add operations.
+///
+/// Implemented for `f32` and `f64`
+pub trait CondMulAdd {
+    #[expect(clippy::min_ident_chars)]
+    #[must_use]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self;
+}
+
+#[cfg(feature = "fma")]
+impl CondMulAdd for f64 {
+    #[inline]
+    #[expect(clippy::disallowed_methods)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self.mul_add(b, c)
+    }
+}
+
+#[cfg(not(feature = "fma"))]
+impl CondMulAdd for f64 {
+    #[inline]
+    #[expect(clippy::suboptimal_flops)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self * b + c
+    }
+}
+
+#[cfg(feature = "fma")]
+impl CondMulAdd for f32 {
+    #[inline]
+    #[expect(clippy::disallowed_methods)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self.mul_add(b, c)
+    }
+}
+
+#[cfg(not(feature = "fma"))]
+impl CondMulAdd for f32 {
+    #[inline]
+    #[expect(clippy::suboptimal_flops)]
+    fn cond_mul_add(self, b: Self, c: Self) -> Self {
+        self * b + c
+    }
+}

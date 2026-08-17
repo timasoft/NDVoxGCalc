@@ -1,1 +1,6 @@
 too-many-lines-threshold = 450
+
+disallowed-methods = [
+    { path = "f64::mul_add", reason = "use `CondMulAdd::cond_mul_add` instead (respects the `fma` feature)" },
+    { path = "f32::mul_add", reason = "use `CondMulAdd::cond_mul_add` instead (respects the `fma` feature)" },
+]

@@ -1,5 +1,5 @@
-use crate::utils::{CondMulAdd as _, DimMapping, PackedColor};
-use hypervox_expr::{Node, VarMap};
+use crate::utils::{DimMapping, PackedColor};
+use hypervox_expr::{CondMulAdd as _, Node, VarMap};
 use rayon::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
