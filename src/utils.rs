@@ -23,6 +23,12 @@ pub fn first_bad_offset(step: f64) -> f64 {
 /// One ULP below that threshold to avoid `first_bad_offset` returning ∞.
 pub const MAX_VOXEL_SIZE: f64 = (f64::MAX / (1_u64 << f64::MANTISSA_DIGITS) as f64).next_down();
 
+#[cfg(target_pointer_width = "64")]
+pub const MAX_GRID_SIZE: u16 = 1024;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_GRID_SIZE: u16 = 256;
+
 pub const CAMERA_RADIUS: f32 = 1.5;
 pub const CAMERA_HEIGHT: f32 = 0.8;
 

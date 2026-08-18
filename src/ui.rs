@@ -16,7 +16,7 @@ use web_time::{Duration, Instant};
 use crate::generate::generate_voxels;
 use crate::utils::{
     CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, DimMapping, ExpressionConfig,
-    ExpressionEntry, ExpressionStatus, GridConfig, MAX_VOXEL_SIZE, ProfilingDataMs,
+    ExpressionEntry, ExpressionStatus, GridConfig, MAX_GRID_SIZE, MAX_VOXEL_SIZE, ProfilingDataMs,
     RegenerateEveryFrame, SceneEntities, ShowAxesPlanes, first_bad_offset, parallel_available,
 };
 
@@ -232,7 +232,7 @@ pub fn egui_ui_system(
 
                 if ui
                     .add(
-                        egui::Slider::new(&mut grid_config.size, 2_u16..=256_u16)
+                        egui::Slider::new(&mut grid_config.size, 2_u16..=MAX_GRID_SIZE)
                             .logarithmic(false)
                             .custom_formatter(|n, _| format!("{n:.0}")),
                     )
@@ -241,7 +241,7 @@ pub fn egui_ui_system(
                     *regenerate_request = RegenRequest::Debounce(Instant::now());
                 }
 
-                if ui.button("+").clicked() && grid_config.size < 256 {
+                if ui.button("+").clicked() && grid_config.size < MAX_GRID_SIZE {
                     grid_config.size = snap_size_up(grid_config.size);
                     *regenerate_request = RegenRequest::Debounce(Instant::now());
                 }
