@@ -507,11 +507,11 @@ fn cse_vs_nocse() {
         let mut sum2 = 0.0_f64;
 
         for nz in 0..side {
-            let zv = f64::from(nz).mul_add(scale, -5.0_f64);
+            let zv = f64::from(nz).cond_mul_add(scale, -5.0_f64);
             for ny in 0..side {
-                let yv = f64::from(ny).mul_add(scale, -5.0_f64);
+                let yv = f64::from(ny).cond_mul_add(scale, -5.0_f64);
                 for nx in 0..side {
-                    let xv = f64::from(nx).mul_add(scale, -5.0_f64);
+                    let xv = f64::from(nx).cond_mul_add(scale, -5.0_f64);
                     let vars = [xv, yv, zv];
 
                     let mut cache1 = vec![0.0_f64; multi1.cse_slots];

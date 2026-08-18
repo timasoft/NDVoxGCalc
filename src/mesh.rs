@@ -1,7 +1,8 @@
 use bevy::{mesh::Indices, prelude::*};
+use hypervox_expr::CondMulAdd as _;
 use rayon::prelude::*;
 
-use crate::utils::{CondMulAdd as _, PackedColor, unpack_color};
+use crate::utils::{PackedColor, unpack_color};
 
 type Vec3Arr = [f32; 3];
 type IVec3Arr = [i32; 3];

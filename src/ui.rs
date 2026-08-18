@@ -6,7 +6,7 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, egui};
 use bevy_panorbit_camera::PanOrbitCamera;
-use hypervox_expr::{f0_list, f1_list, f2_list};
+use hypervox_expr::{CondMulAdd as _, f0_list, f1_list, f2_list};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
@@ -15,10 +15,9 @@ use web_time::{Duration, Instant};
 
 use crate::generate::generate_voxels;
 use crate::utils::{
-    CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, CondMulAdd as _, DimMapping,
-    ExpressionConfig, ExpressionEntry, ExpressionStatus, GridConfig, MAX_VOXEL_SIZE,
-    ProfilingDataMs, RegenerateEveryFrame, SceneEntities, ShowAxesPlanes, first_bad_offset,
-    parallel_available,
+    CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, DimMapping, ExpressionConfig,
+    ExpressionEntry, ExpressionStatus, GridConfig, MAX_VOXEL_SIZE, ProfilingDataMs,
+    RegenerateEveryFrame, SceneEntities, ShowAxesPlanes, first_bad_offset, parallel_available,
 };
 
 const REGEN_DEBOUNCE: Duration = Duration::from_millis(300);

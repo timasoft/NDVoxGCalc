@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use hypervox_expr::{VarMap, parse};
+use hypervox_expr::{CondMulAdd, VarMap, parse};
 use std::hint::black_box;
 
 #[derive(Clone, Copy)]
@@ -30,91 +30,95 @@ const FAST_BENCH_SIDE: usize = 128;
 const SLOW_BENCH_SIDE: usize = 64;
 
 #[inline(never)]
-const fn direct_simple(x: f64, y: f64, z: f64) -> f64 {
-    y.mul_add(z, x)
+fn direct_simple(x: f64, y: f64, z: f64) -> f64 {
+    y.cond_mul_add(z, x)
 }
 
 #[inline(never)]
 fn direct_medium(x: f64, y: f64, z: f64) -> f64 {
-    y.cos().mul_add(z * z, x.sin()) + x.hypot(y)
+    y.cos().cond_mul_add(z * z, x.sin()) + x.hypot(y)
 }
 
 #[inline(never)]
 fn direct_heavy(x: f64, y: f64, z: f64) -> f64 {
     (x.sin() * y.cos()).exp()
-        + z.mul_add(z, 1.0).ln()
-        + (z.mul_add(z, y.mul_add(y, x * x)).sqrt()).atan2(black_box(1.0))
+        + z.cond_mul_add(z, 1.0).ln()
+        + (z.cond_mul_add(z, y.cond_mul_add(y, x * x)).sqrt()).atan2(black_box(1.0))
         + (x + y).abs().sqrt()
 }
 
 #[inline(never)]
 fn direct_repeated(x: f64, y: f64, _z: f64) -> f64 {
-    y.mul_add(y, x * x)
-        .mul_add(y.mul_add(y, x * x), y.mul_add(y, x * x).sin())
+    y.cond_mul_add(y, x * x)
+        .cond_mul_add(y.cond_mul_add(y, x * x), y.cond_mul_add(y, x * x).sin())
 }
 
 #[inline(never)]
 fn direct_very_heavy(x: f64, y: f64, z: f64) -> f64 {
-    let r2 = z.mul_add(z, y.mul_add(y, x * x));
+    let r2 = z.cond_mul_add(z, y.cond_mul_add(y, x * x));
     let sqrt_r2 = r2.sqrt();
-    ((x.sin() * y.cos()).mul_add(
+    ((x.sin() * y.cos()).cond_mul_add(
         z.tanh(),
-        (z.tanh() * z.tanh()).mul_add(
+        (z.tanh() * z.tanh()).cond_mul_add(
             z.tanh(),
-            (y.cos() * y.cos()).mul_add(y.cos(), x.sin() * x.sin() * x.sin()),
+            (y.cos() * y.cos()).cond_mul_add(y.cos(), x.sin() * x.sin() * x.sin()),
         ),
     ) / (1.0 + (x.sin() * y.cos() * z.tanh()).abs()))
-    .mul_add(
+    .cond_mul_add(
         z.tanh()
-            .mul_add(
+            .cond_mul_add(
                 z.tanh(),
-                y.cos().mul_add(y.cos(), x.sin().mul_add(x.sin(), 1.0)),
+                y.cos()
+                    .cond_mul_add(y.cos(), x.sin().cond_mul_add(x.sin(), 1.0)),
             )
             .sqrt(),
-        (1.0 + r2.sin().mul_add(r2.cos(), -(r2 / (1.0 + r2)).tanh()).abs())
-            .cbrt()
-            .mul_add(
-                ((1.0 + r2).sqrt() / (1.0 + sqrt_r2)).atan(),
-                (x.sin() * y.sin())
-                    .mul_add(
-                        z.sin(),
-                        z.sin()
-                            .mul_add(x.cos(), y.sin().mul_add(z.cos(), x.sin() * y.cos())),
-                    )
-                    .abs()
-                    .ln_1p()
-                    .mul_add(
-                        (r2.sin().mul_add(r2.cos(), 1.0 + r2).sqrt()).atan2(
-                            1.0 + y
-                                .cos()
-                                .mul_add(
-                                    z.cos(),
-                                    x.sin().mul_add(
-                                        z.sin(),
-                                        z.tanh().mul_add(
-                                            z.tanh(),
-                                            y.cos().mul_add(y.cos(), x.sin() * x.sin()),
-                                        ),
+        (1.0 + r2
+            .sin()
+            .cond_mul_add(r2.cos(), -(r2 / (1.0 + r2)).tanh())
+            .abs())
+        .cbrt()
+        .cond_mul_add(
+            ((1.0 + r2).sqrt() / (1.0 + sqrt_r2)).atan(),
+            (x.sin() * y.sin())
+                .cond_mul_add(
+                    z.sin(),
+                    z.sin()
+                        .cond_mul_add(x.cos(), y.sin().cond_mul_add(z.cos(), x.sin() * y.cos())),
+                )
+                .abs()
+                .ln_1p()
+                .cond_mul_add(
+                    (r2.sin().cond_mul_add(r2.cos(), 1.0 + r2).sqrt()).atan2(
+                        1.0 + y
+                            .cos()
+                            .cond_mul_add(
+                                z.cos(),
+                                x.sin().cond_mul_add(
+                                    z.sin(),
+                                    z.tanh().cond_mul_add(
+                                        z.tanh(),
+                                        y.cos().cond_mul_add(y.cos(), x.sin() * x.sin()),
                                     ),
-                                )
-                                .abs(),
-                        ),
-                        (-sqrt_r2 / (1.0 + sqrt_r2)).exp()
-                            * sqrt_r2
-                                .cos()
-                                .mul_add((sqrt_r2 / (1.0 + sqrt_r2)).tanh(), sqrt_r2)
-                                .sin(),
+                                ),
+                            )
+                            .abs(),
+                    ),
+                    (-sqrt_r2 / (1.0 + sqrt_r2)).exp()
+                        * sqrt_r2
+                            .cos()
+                            .cond_mul_add((sqrt_r2 / (1.0 + sqrt_r2)).tanh(), sqrt_r2)
+                            .sin(),
+                )
+                + (y.cond_mul_add(y, x * x).cos() * z.cond_mul_add(z, y * y).sin())
+                    .cond_mul_add(
+                        x.cond_mul_add(x, z * z).cos(),
+                        y.cond_mul_add(y, x * x).sin()
+                            * z.cond_mul_add(z, y * y).cos()
+                            * x.cond_mul_add(x, z * z).sin(),
                     )
-                    + (y.mul_add(y, x * x).cos() * z.mul_add(z, y * y).sin())
-                        .mul_add(
-                            x.mul_add(x, z * z).cos(),
-                            y.mul_add(y, x * x).sin()
-                                * z.mul_add(z, y * y).cos()
-                                * x.mul_add(x, z * z).sin(),
-                        )
-                        .tanh()
-                        / (1.0 + r2.sin().mul_add(r2.sin(), r2.cos()).abs()),
-            ),
+                    .tanh()
+                    / (1.0 + r2.sin().cond_mul_add(r2.sin(), r2.cos()).abs()),
+        ),
     )
 }
 
@@ -225,13 +229,13 @@ where
     let mut sum = 0.0_f64;
     for nz in 0..side {
         #[expect(clippy::cast_precision_loss)]
-        let zv = (nz as f64).mul_add(scale, -5.0);
+        let zv = (nz as f64).cond_mul_add(scale, -5.0_f64);
         for ny in 0..side {
             #[expect(clippy::cast_precision_loss)]
-            let yv = (ny as f64).mul_add(scale, -5.0);
+            let yv = (ny as f64).cond_mul_add(scale, -5.0_f64);
             for nx in 0..side {
                 #[expect(clippy::cast_precision_loss)]
-                let xv = (nx as f64).mul_add(scale, -5.0);
+                let xv = (nx as f64).cond_mul_add(scale, -5.0_f64);
                 sum += black_box(f(black_box(xv), black_box(yv), black_box(zv)));
             }
         }
@@ -382,7 +386,7 @@ fn bench_expression(
 
             #[expect(clippy::cast_precision_loss)]
             for nz in 0..side {
-                vars[2] = black_box((nz as f64).mul_add(scale, -5.0));
+                vars[2] = black_box((nz as f64).cond_mul_add(scale, -5.0_f64));
                 for g in &multi.groups {
                     if g.level == 2 {
                         (g.combined)(&vars, cache);
@@ -390,7 +394,7 @@ fn bench_expression(
                 }
 
                 for ny in 0..side {
-                    vars[1] = black_box((ny as f64).mul_add(scale, -5.0));
+                    vars[1] = black_box((ny as f64).cond_mul_add(scale, -5.0_f64));
                     for g in &multi.groups {
                         if g.level == 1 {
                             (g.combined)(&vars, cache);
@@ -398,7 +402,7 @@ fn bench_expression(
                     }
 
                     for nx in 0..side {
-                        vars[0] = black_box((nx as f64).mul_add(scale, -5.0));
+                        vars[0] = black_box((nx as f64).cond_mul_add(scale, -5.0_f64));
                         sum += black_box((multi.main)(&vars, cache));
                     }
                 }
@@ -424,7 +428,9 @@ fn register_compile(c: &mut Criterion) {
 
 #[cfg_attr(not(feature = "slow-benches"), expect(dead_code))]
 mod evalexpr_bench {
-    use super::{CASES, Criterion, D3, SLOW_BENCH_SIDE, black_box, parse, run_triple_loop};
+    use super::{
+        CASES, CondMulAdd as _, Criterion, D3, SLOW_BENCH_SIDE, black_box, parse, run_triple_loop,
+    };
     use evalexpr::{
         ContextWithMutableVariables as _, DefaultNumericTypes, HashMapContext, Value,
         build_operator_tree,
@@ -490,11 +496,11 @@ mod evalexpr_bench {
                     for ny in 0..side {
                         for nx in 0..side {
                             #[expect(clippy::cast_precision_loss)]
-                            let xv = black_box((nx as f64).mul_add(scale, -5.0));
+                            let xv = black_box((nx as f64).cond_mul_add(scale, -5.0_f64));
                             #[expect(clippy::cast_precision_loss)]
-                            let yv = black_box((ny as f64).mul_add(scale, -5.0));
+                            let yv = black_box((ny as f64).cond_mul_add(scale, -5.0_f64));
                             #[expect(clippy::cast_precision_loss)]
-                            let zv = black_box((nz as f64).mul_add(scale, -5.0));
+                            let zv = black_box((nz as f64).cond_mul_add(scale, -5.0_f64));
                             ctx.set_value("x".into(), Value::from_float(xv))
                                 .expect("should not fail");
                             ctx.set_value("y".into(), Value::from_float(yv))

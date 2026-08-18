@@ -9,6 +9,7 @@ use bevy::{
 };
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
+use hypervox_expr::CondMulAdd as _;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -17,9 +18,9 @@ use web_time::Instant;
 
 use crate::generate::generate_voxels;
 use crate::utils::{
-    CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, CondMulAdd as _, DimMapping,
-    ExpressionConfig, ExpressionStatus, GridConfig, ProfilingDataMs, RegenerateEveryFrame,
-    SceneEntities, ShowAxesPlanes, parallel_available,
+    CAMERA_HEIGHT, CAMERA_RADIUS, CameraMode, CameraState, DimMapping, ExpressionConfig,
+    ExpressionStatus, GridConfig, ProfilingDataMs, RegenerateEveryFrame, SceneEntities,
+    ShowAxesPlanes, parallel_available,
 };
 
 #[cfg(target_arch = "wasm32")]
