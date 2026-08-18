@@ -1,6 +1,6 @@
 [package]
 name = "hypervox_expr"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "High-performance mathematical expression parser, AST optimizer (constant folding, CSE), and closure compiler with multi-dimensional invariant hoisting"
 authors = ["timasoft <tima.klester@yandex.ru>"]
