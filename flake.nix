@@ -126,7 +126,7 @@
         CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
         doCheck = false;
 
-        wasm-bindgen-cli = pkgs.wasm-bindgen-cli_0_2_117;
+        wasm-bindgen-cli = pkgs.wasm-bindgen-cli_0_2_126;
 
         nativeBuildInputs = with pkgs; [ trunk binaryen lld pkg-config ];
 
